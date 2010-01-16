@@ -450,8 +450,6 @@ def download_trailers():
                             quality = res
                         xml.insert(-1, "\t<quality>%s</quality>" % quality)
                         for i in range(len(xml)):
-                            #xml[i] = xml[i].decode('utf_8', 'ignore')
-                            #xml[i] = unicode(xml[i], 'utf_8', 'replace').encode("utf_8")
                             xml[i] = xml[i].decode("utf_8", 'ignore')
                         try:
                             xml_string = "\n".join(xml)
