@@ -1,4 +1,6 @@
+*.wpr
 *.pyc
 *.zip
 build/
 dist/
+atd/
