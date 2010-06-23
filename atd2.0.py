@@ -160,13 +160,28 @@ class Trailer():
             if not i_result:
                 self.mpaa = None
             else:
+                cert_list = ["NC-17", "R", "PG-13", "PG", "G", "UNRATED"]
                 i.update(i_result)
                 if i_result.has_key('certificates'):
                     usa_certs = []
-                    for cert in certs:
+                    for cert in i_result['certificates']:
                         #Parse out all the USA certs because USA certs seems to be what most
                         #software I'm familiar with care about
-                        usa_certs.append(re.match(r"usa:(?P<rating>[a-zA-Z0-9- ]+)(\Z|:)", cert.lower()).group('rating').upper())
+                        try:
+                            rating = re.match(r"usa:(?P<rating>[a-zA-Z0-9- ]+)(\Z|:)", cert.lower()).group('rating').upper()
+                            if rating in cert_list:
+                                usa_certs.append(rating)
+                        except:
+                            pass
+
+                    #Sort via cert_list and take least-restrictive rating
+                    if len(usa_certs) > 0:
+                        try:
+                            self.mpaa = sorted(usa_certs, key=cert_list.index)[-1]
+                        except:
+                            import pdb; pdb.set_trace()
+                    else:
+                        self.mpaa = None
 
                 elif i_result.has_key('mpaa'):
                     try:
@@ -174,8 +189,7 @@ class Trailer():
                     except:
                         self.mpaa = None
                 else:
-                    print "NO RATING INFO FROM IMDB"
-
+                    self.mpaa = None
 
     def __str__(self):
         if self.release_date:
@@ -187,8 +201,22 @@ class Trailer():
                                                                   datetime.datetime.strftime(self.date, "%Y-%m-%d"),
                                                                   self.release_date)
 movies = _fetchxml()
+not_rated_count = 0
+fetched_rating_count = 0
 for movie in movies:
     t = Trailer(movie)
-    print "MOVIE: %s" % t.title
-    t._getimdb()
-    print '-'*60
+
+    if t.mpaa.lower() == 'not yet rated':
+
+        not_rated_count += 1
+        pre = t.mpaa
+
+        t._getimdb()
+
+        post = t.mpaa
+        if pre != post and post != None:
+            print "MOVIE: %s" % t.title
+            print "pre_IMDB: %s" % pre
+            print "post_IMDB: %s" % post
+            fetched_rating_count += 1
+            print '-'*60
