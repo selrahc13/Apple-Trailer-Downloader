@@ -7,7 +7,13 @@ from xml.etree.ElementTree import ElementTree
 
 from pkg.BeautifulSoup import BeautifulSoup
 import imdb
+import pkg.y_serial_v052 as y_serial
 
+def build_trailers():
+    movies = _fetchxml()
+
+    for movie in movies:
+        t = Trailer(movie)
 
 def mkdir(d):
     ''' Tries to make a directory and avoid race conditions.
@@ -249,6 +255,8 @@ class Trailer():
             return "<Title: %s, Trailer date: %s, Movie date: %s>" % (self.title,
                                                                   datetime.datetime.strftime(self.date, "%Y-%m-%d"),
                                                                   self.release_date)
+
+
 #movies = _fetchxml()
 #not_rated_count = 0
 #fetched_rating_count = 0
