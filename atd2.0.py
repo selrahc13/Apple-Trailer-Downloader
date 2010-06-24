@@ -1,6 +1,7 @@
 import datetime
 import os
 import re
+import shlex
 import struct
 import urllib2
 from xml.etree.ElementTree import ElementTree
@@ -9,11 +10,24 @@ from pkg.BeautifulSoup import BeautifulSoup
 import imdb
 import pkg.y_serial_v052 as y_serial
 
-def build_trailers():
-    movies = _fetchxml()
+def persist_movie(db, movie):
+    tags = movie.get_tags()
+    try:
+        db.insert(movie, tags, 'movies')
+    except:
+        import pdb; pdb.set_trace()
 
-    for movie in movies:
-        t = Trailer(movie)
+def build_movies():
+    movies_xml = _fetchxml()
+    movies = []
+
+    count = 0
+    for movie_xml in movies_xml:
+        print "Fetching movie info: %s/%s" % (count, len(movies_xml)) + "\r",
+        movies.append(Movie(movie_xml))
+        count += 1
+    print
+    return movies
 
 def mkdir(d):
     ''' Tries to make a directory and avoid race conditions.
@@ -138,33 +152,80 @@ def _fetchxml():
     movies = tree.findall('movieinfo')
     return movies
 
-class Trailer():
+class Movie():
     def __init__(self, xml):
         ''' Takes a movieinfo node from Apple's trailer xml file.
         '''
+        self.apple_id = None
         self.title = None
         self.runtime = None
         self.mpaa = None
-        self.date = None
+        #self.date = None
         self.release_date = None
         self.description = None
         self.apple_genre = None
         self.poster_url = None
         self.large_poster_url = None
-        self.trailer_url = None
+        #self.trailer_url = None
         self.studio = None
         self.director = None
         self.cast = None
+        self.trailers = []
         self._parsexml(xml)
         self._getimdb()
+
+    def _make_tag(self, text):
+        return "#'%s'" % text
+
+    def get_tags(self, string=True):
+        ''' This generates a space seperated string of "tags" for a movie.  This
+            contains (if available):
+                movie title
+                release date
+                genres
+                director
+                cast members
+                mpaa rating
+        '''
+        tags = []
+
+        tags.append(self.title)
+        if self.release_date:
+            tags.append(datetime.datetime.strftime(self.release_date, "%Y-%m-%d"))
+        for c in self.cast:
+            tags.append(c)
+        tags.append("mpaa:%s" % self.mpaa)
+        tags.append("apple_id:%s" % self.apple_id)
+
+        tags2 = []
+        for tag in tags:
+            tags2.append(self._make_tag(tag))
+
+        if string:
+            return ' '.join(tags2)
+        else:
+            return tags2
+
+
+    def swallow(self, trailer):
+        ''' Takes a Trailer() obj and merges it's trailer data with ours.
+
+            This fails if the Trailer.apple_id isn't the same as ours.
+
+            This is useful for merging persisted Trailer() objects with newly
+            generated ones.
+
+            The attributes that are updated include the
+        '''
 
     def _parsexml(self, xml):
         ''' Get all the trailer attributes from the xml.
         '''
+        self.apple_id = xml.attrib['id']
         self.title = xml.find('info/title').text
         self.runtime = xml.find('info/runtime').text
         self.mpaa = xml.find('info/rating').text
-        self.date = datetime.datetime.strptime(xml.find('info/postdate').text, "%Y-%m-%d")
+        #self.date = datetime.datetime.strptime(xml.find('info/postdate').text, "%Y-%m-%d")
 
         #Some trailers don't have a release date yet
         try:
@@ -178,12 +239,17 @@ class Trailer():
         self.apple_genre = [x.text for x in xml.findall('genre/name')]
         self.poster_url = xml.find('poster/location').text
         self.large_poster_url = xml.find('poster/xlarge').text
-        self.trailer_url = [xml.find('preview/large').text]
+        #self.trailer_url = [xml.find('preview/large').text]
         self.studio = xml.find('info/studio').text
         self.director = xml.find('info/director').text
 
         #Make a list of all the listed cast members
         self.cast = [x.text for x in xml.findall('cast/name')]
+
+        #Build a Trailer() for this trailer
+        trailer_url = xml.find('preview/large').text
+        trailer_date = datetime.datetime.strptime(xml.find('info/postdate').text, "%Y-%m-%d")
+        self.trailers.append(Trailer(trailer_date, trailer_url))
 
     def _getimdb(self):
         ''' A lot of movies don't have an MPAA rating when they're posted to Apple.
@@ -191,7 +257,10 @@ class Trailer():
         '''
         if self.mpaa.lower() == 'not yet rated':
             i = imdb.IMDb()
-            i_results = i.search_movie(self.title.lower())
+            try:
+                i_results = i.search_movie(self.title.lower())
+            except:
+                raise ValueError("Error accesing IMDb")
             if self.release_date:
                 year = self.release_date.year
             else:
@@ -248,28 +317,33 @@ class Trailer():
 
     def __str__(self):
         if self.release_date:
-            return "<Title: %s, Trailer date: %s, Movie date: %s>" % (self.title,
-                                                                  datetime.datetime.strftime(self.date, "%Y-%m-%d"),
-                                                                  datetime.datetime.strftime(self.release_date, "%Y-%m-%d"))
+            return "<Title: %s, Trailers: %s, Movie date: %s, MPAA: %s>" % (self.title,
+                                                                  len(self.trailers),
+                                                                  datetime.datetime.strftime(self.release_date, "%Y-%m-%d"),
+                                                                  self.mpaa)
         else:
-            return "<Title: %s, Trailer date: %s, Movie date: %s>" % (self.title,
-                                                                  datetime.datetime.strftime(self.date, "%Y-%m-%d"),
-                                                                  self.release_date)
+            return "<Title: %s, Trailers: %s, Movie date: %s, MPAA: %s>" % (self.title,
+                                                                  len(self.trailers),
+                                                                  self.release_date,
+                                                                  self.mpaa)
 
+class Trailer():
+    def __init__(self, date, url):
+        self.date = date
+        self.url = url
+        self.downloaded = False
 
-#movies = _fetchxml()
-#not_rated_count = 0
-#fetched_rating_count = 0
-#for movie in movies:
-    #t = Trailer(movie)
+if not os.path.exists('atd.db'):
+    open('atd.db', 'w').close()
 
-    #if t.mpaa.lower() == 'not yet rated':
-        #not_rated_count += 1
-        #pre = t.mpaa
-        #post = t.mpaa
-        #if pre != post and post != None:
-            #print "MOVIE: %s" % t.title
-            #print "pre_IMDB: %s" % pre
-            #print "post_IMDB: %s" % post
-            #fetched_rating_count += 1
-            #print '-'*60
+db_path = os.path.abspath('atd.db')
+
+db = y_serial.Main(db_path)
+
+for movie in build_movies():
+    print "Persisting %s" % movie.title
+    persist_movie(db, movie)
+    #try:
+        #print movie.get_tags()
+    #except:
+        #pass
