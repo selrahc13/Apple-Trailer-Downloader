@@ -3,6 +3,7 @@ import os
 import re
 import shlex
 import struct
+import time
 import urllib2
 from xml.etree.ElementTree import ElementTree
 
@@ -386,12 +387,48 @@ class Trailer():
         self.date = date
         self.url = url
         self.downloaded = False
+        self.potential_res = ['1080p', '720p', '480p', '640w', '480', '320']
+        self._rez_cache = (datetime.datetime.today(), [])
+
+    def download(self):
+        pass
+
+    #treat method as attribute to save on calls to apple.com
+    @property
+    def available_res(self):
+        #go fetch available resolutions only if it's been more than 6 days
+        if (datetime.datetime.today() - self._rez_cache[0]).days > 6 or len(self._rez_cache[1]) == 0:
+            rezs = []
+            for res in self.potential_res:
+                #build the url for the resolution
+                try:
+                    url = re.sub(re.search(r"_h(?P<res>.*)\.mov", self.url).group('res'), res, self.url)
+                except:
+                    continue
+
+                #just checking for file existance, don't need to download
+                try:
+                    opener = _get_trailer_opener(url)
+                except urllib2.HTTPError:
+                    continue
+                except:
+                    print "Unknown error with trailer resolution finder (http)"
+                    import pdb; pdb.set_trace()
+
+                headers = opener.info().headers
+                for header in headers:
+                    #make sure file is a quicktime video
+                    if header.lower().count('content-type:'):
+                        if header.lower().count('video/quicktime'):
+                            rezs.append(res)
+
+            #store resolutions in our cache along with the datetime
+            self._rez_cache = (datetime.datetime.today(), rezs)
+            print "fetched"
+        else:
+            print "FETCHED"
+
+        return self._rez_cache[1]
+
 
 db = db_conx('atd.db')
-
-for movie in build_movies():
-    persist_movie(movie, db)
-    #try:
-        #print movie.get_tags()
-    #except:
-        #pass
