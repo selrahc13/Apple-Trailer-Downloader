@@ -10,12 +10,69 @@ from pkg.BeautifulSoup import BeautifulSoup
 import imdb
 import pkg.y_serial_v052 as y_serial
 
-def persist_movie(db, movie):
+def persist_movie(movie, db):
+    print "Saving %s to database" % movie.title
     tags = movie.get_tags()
+    persisted_movie = fetch_by_apple_id(movie.apple_id, db)
+    if persisted_movie:
+        print "\t%s in database already, updating" % movie.title
+        movie = update_movie(persisted_movie, movie)
+        delete_by_apple_id(movie.apple_id, db)
     try:
         db.insert(movie, tags, 'movies')
     except:
         import pdb; pdb.set_trace()
+
+def update_movie(movie1, movie2):
+    ''' If both movies are the same, see if movie2 contains information for a
+        new trailer.  If so, add new trailer info to movie1 and return it,
+        otherwise we return movie1 unmodified.
+
+        Additionally, we update the movie release date.
+    '''
+    if movie1.apple_id != movie2.apple_id:
+        raise ValueError("Cannot compare two different movies")
+
+    new_trailers = []
+
+    #check each trailer in movie2
+    for trailer2 in movie2.trailers:
+        #assume it's new
+        is_new_trailer = True
+
+        #comparing to each trailer in movie1...
+        for trailer1 in movie1.trailers:
+            if trailer2.url == trailer1.url:
+                #Assumed wrong, it's not new because trailer in movie1 has same url
+                is_new_trailer = False
+
+        #If we assumed correctly...
+        if is_new_trailer:
+            #...we add the trailer to our list of new trailers...
+            new_trailers.append(trailer2)
+
+    #...and add it to movie1
+    movie1.trailers.extend(new_trailers)
+
+    #update the movie release date
+    movie1.release_date = movie2.release_date
+
+    return movie1
+
+def fetch_by_apple_id(apple_id, db):
+    ''' Fetches the movie object for the specified apple_id from the database
+    '''
+    try:
+        return db.select('apple_id:%s' % apple_id, 'movies')
+    except:
+        print "fail to fetch"
+
+
+def delete_by_apple_id(apple_id, db):
+    db.delete('apple_id:%s' % apple_id, 'movies')
+    if not db.select('apple_id:%s' % apple_id, 'movies'):
+        return True
+    return False
 
 def build_movies():
     movies_xml = _fetchxml()
@@ -34,7 +91,7 @@ def db_conx(filename):
         open(filename, 'w').close()
 
     db_path = os.path.abspath(filename)
-
+    print "Database location: %s" % db_path
     return y_serial.Main(db_path)
 
 def mkdir(d):
@@ -179,6 +236,7 @@ class Movie():
         self.director = None
         self.cast = None
         self.trailers = []
+        self.inst_on = datetime.datetime.today()
         self._parsexml(xml)
         self._getimdb()
 
@@ -213,18 +271,6 @@ class Movie():
             return ' '.join(tags2)
         else:
             return tags2
-
-
-    def swallow(self, trailer):
-        ''' Takes a Trailer() obj and merges it's trailer data with ours.
-
-            This fails if the Trailer.apple_id isn't the same as ours.
-
-            This is useful for merging persisted Trailer() objects with newly
-            generated ones.
-
-            The attributes that are updated include the
-        '''
 
     def _parsexml(self, xml):
         ''' Get all the trailer attributes from the xml.
@@ -341,11 +387,10 @@ class Trailer():
         self.url = url
         self.downloaded = False
 
-db = db_conx('atd.py')
+db = db_conx('atd.db')
 
 for movie in build_movies():
-    print "Persisting %s" % movie.title
-    persist_movie(db, movie)
+    persist_movie(movie, db)
     #try:
         #print movie.get_tags()
     #except:

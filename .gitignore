@@ -1,3 +1,4 @@
+*.db
 *.wpr
 *.pyc
 *.zip
