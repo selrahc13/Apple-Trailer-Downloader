@@ -29,6 +29,14 @@ def build_movies():
     print
     return movies
 
+def db_conx(filename):
+    if not os.path.exists(filename):
+        open(filename, 'w').close()
+
+    db_path = os.path.abspath(filename)
+
+    return y_serial.Main(db_path)
+
 def mkdir(d):
     ''' Tries to make a directory and avoid race conditions.
     '''
@@ -333,12 +341,7 @@ class Trailer():
         self.url = url
         self.downloaded = False
 
-if not os.path.exists('atd.db'):
-    open('atd.db', 'w').close()
-
-db_path = os.path.abspath('atd.db')
-
-db = y_serial.Main(db_path)
+db = db_conx('atd.py')
 
 for movie in build_movies():
     print "Persisting %s" % movie.title
