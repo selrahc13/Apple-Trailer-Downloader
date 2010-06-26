@@ -60,13 +60,18 @@ def update_movie(movie1, movie2):
 
     return movie1
 
+def update_movies(db):
+    movies = build_movies()
+    for movie in movies:
+        persist_movie(movie, db)
+
 def fetch_by_apple_id(apple_id, db):
     ''' Fetches the movie object for the specified apple_id from the database
     '''
     try:
         return db.select('apple_id:%s' % apple_id, 'movies')
     except:
-        print "fail to fetch"
+        return
 
 
 def delete_by_apple_id(apple_id, db):
@@ -241,6 +246,11 @@ class Movie():
         self._parsexml(xml)
         self._getimdb()
 
+    def download_trailers(self, res):
+        for t in self.trailers:
+            if not t.downloaded:
+                t.download(res)
+
     def _make_tag(self, text):
         return "#'%s'" % text
 
@@ -390,8 +400,65 @@ class Trailer():
         self.potential_res = ['1080p', '720p', '480p', '640w', '480', '320']
         self._rez_cache = (datetime.datetime.today(), [])
 
-    def download(self):
-        pass
+    def filename(self, url):
+        orig = os.path.basename(url)
+        ext = os.path.splitext(orig)[1]
+
+        return orig
+
+    def download(self, res):
+        if self.downloaded:
+            print "already downloaded"
+            return
+
+        res_choice = self.choose_res(res)
+        if res_choice:
+            url = self._build_url(res_choice)
+            opener = _get_trailer_opener(url)
+            file_path = os.path.join(".\Trailers", self.filename(url))
+            f = open(file_path, 'wb')
+            f.write(opener.read())
+            f.close()
+            self.downloaded = True
+            return file_path
+
+        else:
+            print "This resolution is not available"
+
+    def choose_res(self, target_res, go_higher=False, exact=True):
+        if exact:
+            if target_res not in self.available_res:
+                return None
+
+        if target_res not in self.potential_res:
+            raise ValueError("Invalid resolution.")
+
+        if target_res in self.available_res:
+            #easy choice...what we want is available
+            return target_res
+
+        else:
+            tres_index = self.potential_res.index(target_res)
+            highest_index = len(self.potential_res)-1
+            while 1:
+                if go_higher:
+                    tres_index = tres_index + 1
+                else:
+                    tres_index = tres_index - 1
+
+                if tres_index > highest_index or tres_index < 0:
+                    #out of bounds
+                    return
+
+                if self.potential_res[tres_index] in self.available_res:
+                    return self.potential_res[tres_index]
+
+    def _build_url(self, res):
+        try:
+            url = re.sub(re.search(r"_h(?P<res>.*)\.mov", self.url).group('res'), res, self.url)
+        except:
+            url = ''
+        return url
 
     #treat method as attribute to save on calls to apple.com
     @property
@@ -401,9 +468,8 @@ class Trailer():
             rezs = []
             for res in self.potential_res:
                 #build the url for the resolution
-                try:
-                    url = re.sub(re.search(r"_h(?P<res>.*)\.mov", self.url).group('res'), res, self.url)
-                except:
+                url = self._build_url(res)
+                if not url:
                     continue
 
                 #just checking for file existance, don't need to download
@@ -424,11 +490,12 @@ class Trailer():
 
             #store resolutions in our cache along with the datetime
             self._rez_cache = (datetime.datetime.today(), rezs)
-            print "fetched"
-        else:
-            print "FETCHED"
 
         return self._rez_cache[1]
 
 
 db = db_conx('atd.db')
+
+update_movies(db)
+
+movies = [x[2] for x in db.selectdic("*", 'movies').values()]
