@@ -25,11 +25,10 @@ def persist_movie(movie, db):
         import pdb; pdb.set_trace()
 
 def update_movie(movie1, movie2):
-    ''' If both movies are the same, see if movie2 contains information for a
-        new trailer.  If so, add new trailer info to movie1 and return it,
-        otherwise we return movie1 unmodified.
-
-        Additionally, we update the movie release date.
+    ''' Update attributes and objects that may have changed upon fresh download
+        of info from Apple.  These include:
+            # of trailers
+            Movie release date
     '''
     if movie1.apple_id != movie2.apple_id:
         raise ValueError("Cannot compare two different movies")
@@ -61,6 +60,14 @@ def update_movie(movie1, movie2):
     return movie1
 
 def update_movies(db):
+    ''' This is the main function for freshening our database with current info
+        from Apple.  It builds a list of all the current movies from Apple's
+        XML listing of trailers (which is often somewhat incomplete,
+        unfortunately) via the build_movies() call.  It then persists each movie
+        to our database.
+
+        The only parameter is "db" which is a reference to a y_serial database.
+    '''
     movies = build_movies()
     for movie in movies:
         persist_movie(movie, db)
@@ -72,7 +79,6 @@ def fetch_by_apple_id(apple_id, db):
         return db.select('apple_id:%s' % apple_id, 'movies')
     except:
         return
-
 
 def delete_by_apple_id(apple_id, db):
     db.delete('apple_id:%s' % apple_id, 'movies')
@@ -399,31 +405,23 @@ class Trailer():
         self.downloaded = False
         self.potential_res = ['1080p', '720p', '480p', '640w', '480', '320']
         self._rez_cache = (datetime.datetime.today(), [])
-
-    def filename(self, url):
-        orig = os.path.basename(url)
-        ext = os.path.splitext(orig)[1]
-
-        return orig
+        self.urls = {}
 
     def download(self, res):
-        if self.downloaded:
+        res_choice = self.choose_res(res)
+        if self.urls[res].downloaded:
             print "already downloaded"
             return
 
-        res_choice = self.choose_res(res)
-        if res_choice:
-            url = self._build_url(res_choice)
-            opener = _get_trailer_opener(url)
-            file_path = os.path.join(".\Trailers", self.filename(url))
-            f = open(file_path, 'wb')
-            f.write(opener.read())
-            f.close()
-            self.downloaded = True
-            return file_path
 
+        if res_choice:
+            self.urls[res].download()
         else:
-            print "This resolution is not available"
+            print "%s is not an available resolution" % res
+
+    def build_urls(self, rezs):
+        for res in rezs:
+            self.urls[res] = TrailerUrl(res, self.url)
 
     def choose_res(self, target_res, go_higher=False, exact=True):
         if exact:
@@ -453,7 +451,7 @@ class Trailer():
                 if self.potential_res[tres_index] in self.available_res:
                     return self.potential_res[tres_index]
 
-    def _build_url(self, res):
+    def res_url(self, res):
         try:
             url = re.sub(re.search(r"_h(?P<res>.*)\.mov", self.url).group('res'), res, self.url)
         except:
@@ -468,7 +466,7 @@ class Trailer():
             rezs = []
             for res in self.potential_res:
                 #build the url for the resolution
-                url = self._build_url(res)
+                url = self.res_url(res)
                 if not url:
                     continue
 
@@ -491,7 +489,50 @@ class Trailer():
             #store resolutions in our cache along with the datetime
             self._rez_cache = (datetime.datetime.today(), rezs)
 
+            #populate our list of urls for this trailer
+            self.build_urls(rezs)
+
         return self._rez_cache[1]
+
+class TrailerUrl():
+    def __init__(self, res, master_url):
+        self.master_url = master_url
+        self.res = res
+        self.url = self.build_url()
+        self.downloaded = False
+        self.size = 0
+        self.local_path = None
+        self.hash = None
+
+    def build_url(self):
+        try:
+            url = re.sub(re.search(r"_h(?P<res>.*)\.mov", self.master_url).group('res'), self.res, self.master_url)
+        except:
+            url = ''
+        return url
+
+    def download(self):
+        if self.downloaded:
+            print "already downloaded"
+            return
+
+        opener = _get_trailer_opener(self.url)
+        file_path = os.path.join(".\Trailers", self.filename(self.url))
+        f = open(file_path, 'wb')
+        f.write(opener.read())
+        f.close()
+        self.hash = hash_file(file_path)
+        self.size = os.path.getsize(file_path)
+        self.local_path = file_path
+        self.downloaded = datetime.datetime.today()
+
+        return file_path
+
+    def filename(self, url):
+        orig = os.path.basename(url)
+        ext = os.path.splitext(orig)[1]
+
+        return orig
 
 
 db = db_conx('atd.db')
