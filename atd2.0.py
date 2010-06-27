@@ -325,7 +325,7 @@ class Movie():
         #Build a Trailer() for this trailer
         trailer_url = xml.find('preview/large').text
         trailer_date = datetime.datetime.strptime(xml.find('info/postdate').text, "%Y-%m-%d")
-        self.trailers.append(Trailer(trailer_date, trailer_url))
+        self.trailers.append(Trailer(trailer_date, trailer_url, self.title))
 
         #Find any other trailers for the movie.
         self.find_trailers(trailer_url)
@@ -355,7 +355,7 @@ class Movie():
                 #Make sure we don't already have this one
                 if u != t.url:
                     #We can't know the date of these trailers so we just assign them today's date
-                    self.trailers.append(Trailer(datetime.datetime.today(), u))
+                    self.trailers.append(Trailer(datetime.datetime.today(), u, self.title))
 
 
     def _build_other_trailer_urls(self, url):
@@ -448,8 +448,12 @@ class Movie():
                                                                   self.release_date,
                                                                   self.mpaa)
 
+    def __repr__(self):
+        return "<Movie: %s>" % self.title
+
 class Trailer():
-    def __init__(self, date, url):
+    def __init__(self, date, url, movie_title):
+        self.movie_title = movie_title
         self.date = date
         self.url = url
         self.downloaded = False
@@ -542,6 +546,12 @@ class Trailer():
 
         return self._rez_cache[1]
 
+    def __str__(self):
+        return "<Trailer: %s>" % self.movie_title
+
+    def __repr__(self):
+        return self.__str__()
+
 class TrailerUrl():
     def __init__(self, res, master_url):
         self.master_url = master_url
@@ -581,6 +591,12 @@ class TrailerUrl():
         ext = os.path.splitext(orig)[1]
 
         return orig
+
+    def __str__(self):
+        return "<Trailer url: %s>" % self.url
+
+    def __repr__(self):
+        return self.__str__()
 
 
 db = db_conx('atd.db')
