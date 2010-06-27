@@ -11,6 +11,12 @@ from pkg.BeautifulSoup import BeautifulSoup
 import imdb
 import pkg.y_serial_v052 as y_serial
 
+def download_trailers(db, res):
+    movies = [x[2] for x in db.selectdic("*", 'movies').values()]
+    for movie in movies:
+        print "Checking/downloading for %s" % movie.title
+        movie.download_trailers(res)
+
 def persist_movie(movie, db):
     print "Saving %s to database" % movie.title
     tags = movie.get_tags()
@@ -254,8 +260,7 @@ class Movie():
 
     def download_trailers(self, res):
         for t in self.trailers:
-            if not t.downloaded:
-                t.download(res)
+            t.download(res)
 
     def _make_tag(self, text):
         return "#'%s'" % text
@@ -321,6 +326,51 @@ class Movie():
         trailer_url = xml.find('preview/large').text
         trailer_date = datetime.datetime.strptime(xml.find('info/postdate').text, "%Y-%m-%d")
         self.trailers.append(Trailer(trailer_date, trailer_url))
+
+        #Find any other trailers for the movie.
+        self.find_trailers(trailer_url)
+
+    def find_trailers(self, url):
+        urls = []
+        for purl in self._build_other_trailer_urls(url):
+            #just checking for file existance, don't need to download
+            try:
+                opener = _get_trailer_opener(purl)
+            except urllib2.HTTPError:
+                continue
+            except:
+                print "Unknown error with additional trailer finder"
+                import pdb; pdb.set_trace()
+
+            headers = opener.info().headers
+            for header in headers:
+                #make sure file is a quicktime video
+                if header.lower().count('content-type:'):
+                    if header.lower().count('video/quicktime'):
+                        print "****************FOUND ANOTHER TRAILER: %s" % self.title
+                        urls.append(purl)
+
+        for u in urls:
+            for t in self.trailers:
+                #Make sure we don't already have this one
+                if u != t.url:
+                    #We can't know the date of these trailers so we just assign them today's date
+                    self.trailers.append(Trailer(datetime.datetime.today(), u))
+
+
+    def _build_other_trailer_urls(self, url):
+        potential_urls = []
+        try:
+            trailer_number = int(re.search(r"tlr(?P<num>\d)", url).group('num'))
+        except:
+            print 'no tlr: %s' % self.title
+            return []
+        if trailer_number == 1:
+            return []
+        for i in range(1, trailer_number-1):
+            potential_urls.append(re.sub(r"tlr\d", "tlr%s" % i, url))
+
+        return potential_urls
 
     def _getimdb(self):
         ''' A lot of movies don't have an MPAA rating when they're posted to Apple.
@@ -412,8 +462,6 @@ class Trailer():
         if self.urls[res].downloaded:
             print "already downloaded"
             return
-
-
         if res_choice:
             self.urls[res].download()
         else:
@@ -538,5 +586,4 @@ class TrailerUrl():
 db = db_conx('atd.db')
 
 update_movies(db)
-
-movies = [x[2] for x in db.selectdic("*", 'movies').values()]
+#download_trailers(db, '320')
