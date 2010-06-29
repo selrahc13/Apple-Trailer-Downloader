@@ -682,27 +682,6 @@ class TrailerUrl():
 
 db = db_conx('atd.db')
 
-#update_movies(db)
-#download_trailers(db, '320')
-import copy
-movies1 = build_movies()
-movies2 = build_movies()
-m1 = movies1[17]
-m2 = movies2[17]
+update_movies(db)
+download_trailers(db, '320')
 
-print "length m1.trailers: %s" % len(m1.trailers)
-print "length m2.trailers: %s" % len(m2.trailers)
-
-m1.download_trailers('320')
-
-print "post dl m1.trailers length: %s" % len(m1.trailers)
-
-print m1.trailers[0].urls['320']
-try:
-    print m2.trailers[0].urls['320']
-except:
-    print 'movies are diff'
-
-print "pre-update m1.trailers length: %s" % len(m1.trailers)
-m3 = update_movie(m1, m2)
-print "post-update m1.trailers length: %s" % len(m1.trailers)
