@@ -1,7 +1,9 @@
 import datetime
+from optparse import OptionParser
 import os
 import re
 import shlex
+import shutil
 import struct
 import time
 import urllib2
@@ -10,6 +12,47 @@ from xml.etree.ElementTree import ElementTree
 from pkg.BeautifulSoup import BeautifulSoup
 import imdb
 import pkg.y_serial_v052 as y_serial
+
+def move_file(s, d):
+    ''' Argument d should include destination filename.
+    '''
+    if not os.path.isfile(d):
+        shutil.copy(s, d)
+        os.remove(s)
+        return d
+    else:
+        source_hash = hash_file(s)
+
+        if source_hash == hash_file(d):
+            return d
+
+        #try up to 10 filenames before failing
+        for i in range(10):
+            d = "%s%s%s" % (os.path.splitext(p)[0],
+                                      "." + str(i),
+                                      os.path.splitext(p)[1])
+
+            if not os.path.isfile(d):
+                shutil.copy(s, d)
+                os.remove(s)
+                return d
+
+        raise NameError("Can't find valid filename for %s" % os.path.basename(s))
+
+
+def _options():
+    usage = "usage: %prog [options]\n\nIf no options passed, it will download all not already downloaded trailers to a subdir called Trailers."
+    parser = OptionParser(version="%prog 2.0dev", usage=usage)
+    parser.add_option("-d", "--dest",
+                      dest="destination",
+                      metavar="DIR",
+                      help="Destination directory. (default: %default)",
+                      type="string",
+                      default="Trailers")
+
+    (options, args) = parser.parse_args()
+
+    return options
 
 def sync_trailer(trailer1, trailer2):
     ''' Syncs trailer1 and trailer2 states to each other.  This entails:
@@ -656,16 +699,18 @@ class TrailerUrl():
             return
 
         opener = _get_trailer_opener(self.url)
-        file_path = os.path.join(".\Trailers", self.filename(self.url))
-        f = open(file_path, 'wb')
+        fn = self.filename(self.url)
+
+        f = open(fn, 'wb')
         f.write(opener.read())
         f.close()
-        self.hash = hash_file(file_path)
-        self.size = os.path.getsize(file_path)
-        self.local_path = file_path
-        self.downloaded = datetime.datetime.today()
 
-        return file_path
+        self.downloaded = datetime.datetime.today()
+        self.hash = hash_file(fn)
+        self.size = os.path.getsize(fn)
+
+        mkdir(options.destination)
+        self.local_path = move_file(fn, os.path.join(options.destination, fn))
 
     def filename(self, url):
         orig = os.path.basename(url)
@@ -680,8 +725,10 @@ class TrailerUrl():
         return self.__str__()
 
 
-db = db_conx('atd.db')
+options = _options()
 
-update_movies(db)
-download_trailers(db, '320')
+if __name__ == "__main__":
+    db = db_conx('atd.db')
 
+    update_movies(db)
+    download_trailers(db, '320')
