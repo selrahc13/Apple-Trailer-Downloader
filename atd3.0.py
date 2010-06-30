@@ -8,7 +8,6 @@ import shutil
 import string
 import struct
 import time
-import unicodedata
 import urllib2
 from xml.etree.ElementTree import ElementTree
 
@@ -18,8 +17,12 @@ from pkg.optparse_fmt import IndentedHelpFormatterWithNL
 import pkg.y_serial_v052 as y_serial
 
 def sanitized_filename(filename, file_location=None):
-    ''' Used to remove problematic unicode characters from text and to sanitize
-        text for use in filenames.
+    ''' Used to sanitize text for use as a filename.  If file_location isn't
+        provided, we don't create a test file.  Otherwise temporarily create a
+        0-byte file with the sanitized filename to confirm it's validity.
+
+        >>> sanitized_filename("Prince of Persia: the Sands of Time.mov", ".")
+        'Prince of Persia the Sands of Time.mov'
     '''
     valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
     fn = ''.join(c for c in filename if c in valid_chars)
@@ -40,8 +43,8 @@ def sanitized_filename(filename, file_location=None):
                 return fn
             except:
                 raise NameError("Cannot build valid filename!")
-
-
+    else:
+        return fn
 
 def move_file(s, d):
     ''' Argument d should include destination filename.
