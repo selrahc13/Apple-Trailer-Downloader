@@ -1,3 +1,4 @@
+import base64
 import datetime
 from optparse import OptionParser
 import os
@@ -6,12 +7,47 @@ import shlex
 import shutil
 import struct
 import time
+import unicodedata
 import urllib2
 from xml.etree.ElementTree import ElementTree
 
 from pkg.BeautifulSoup import BeautifulSoup
 import imdb
+from pkg.optparse_fmt import IndentedHelpFormatterWithNL
 import pkg.y_serial_v052 as y_serial
+
+def sanitize(text, fn=False):
+    if not fn:
+        if type(text) != type(unicode()):
+            return text
+    else:
+        invalid_chars = r'<>:"/\|?*.'
+        text = unicode(text)
+
+    punctuation = { ord(u'\N{LEFT SINGLE QUOTATION MARK}'): ord(u"'"),
+                   ord(u'\N{RIGHT SINGLE QUOTATION MARK}'): ord(u"'"),
+                   ord(u'\N{LEFT DOUBLE QUOTATION MARK}'): ord(u'"'),
+                   ord(u'\N{RIGHT DOUBLE QUOTATION MARK}'): ord(u'"'),
+                   ord(u'\N{EM DASH}'): ord(u'-'),
+                   ord(u'\N{EN DASH}'): ord(u'-')}
+    valid_chars = []
+    orig_text = unicode(text)
+    text = text.translate(punctuation)
+    text = unicodedata.normalize('NFKD', text)
+    text = text.encode("cp1252", "replace")
+    if fn:
+        for char in text:
+            if char not in invalid_chars:
+                valid_chars.append(char)
+    else:
+        for char in text:
+            valid_chars.append(char)
+    if len(valid_chars) > 0:
+        ret = ''.join(valid_chars)
+        return ret
+    else:
+        #just return a gibberish, but safe, text
+        return base64.urlsafe_b64encode(text)
 
 def move_file(s, d):
     ''' Argument d should include destination filename.
@@ -28,13 +64,15 @@ def move_file(s, d):
 
         #try up to 10 filenames before failing
         for i in range(10):
-            d = "%s%s%s" % (os.path.splitext(p)[0],
+            d = "%s%s%s" % (os.path.splitext(d)[0],
                                       "." + str(i),
-                                      os.path.splitext(p)[1])
+                                      os.path.splitext(d)[1])
 
             if not os.path.isfile(d):
                 shutil.copy(s, d)
                 os.remove(s)
+                if os.path.isfile(s):
+                    import pdb; pdb.set_trace()
                 return d
 
         raise NameError("Can't find valid filename for %s" % os.path.basename(s))
@@ -42,13 +80,18 @@ def move_file(s, d):
 
 def _options():
     usage = "usage: %prog [options]\n\nIf no options passed, it will download all not already downloaded trailers to a subdir called Trailers."
-    parser = OptionParser(version="%prog 2.0dev", usage=usage)
+    parser = OptionParser(version="%prog 3.0dev", usage=usage, formatter=IndentedHelpFormatterWithNL())
     parser.add_option("-d", "--dest",
                       dest="destination",
                       metavar="DIR",
                       help="Destination directory. (default: %default)",
                       type="string",
                       default="Trailers")
+    parser.add_option("-r", "--rename",
+                      dest="rename_mask",
+                      help='String representing how each trailer should be named on disk.  This string can include these variables:\n  %TITLE%:  The movies title.\n  %FN%:  The trailers original filename.\n  %EXT%:  The trailers original extension.\n  %DT%:  The date the trailer was posted to Apple.com\n  %DTD%:  The date the trailer was downloaded.\n  %RES%:  The resolution of the trailer.\n  %MPAA%:  The rating of the movie.\n------------------\nExamples:\n  atd.py -r "%TITLE% - %RES%.hdmov"\nWill result in trailers named:\n  Iron Man 2 - 720p.hdmov\nYou can also include path seperators to sort trailers into directories:\n  atd.py --rename="%MPAA%\%TITLE% - (%DT%).hdmov"\nResults in:\n  PG-13\Inception - (2010-05-12).hdmov',
+                      type="string",
+                      default="%FN%.%EXT%")
 
     (options, args) = parser.parse_args()
 
@@ -375,8 +418,48 @@ class Movie():
         self._getimdb()
 
     def download_trailers(self, res):
-        for t in self.trailers:
-            t.download(res)
+
+        for i in range(len(self.trailers)):
+            self.trailers[i].download(res)
+            fn = os.path.splitext(os.path.basename(self.trailers[i].urls[res].local_path))[0]
+            ext = os.path.splitext(os.path.basename(self.trailers[i].urls[res].local_path))[1][1:]
+            if self.mpaa:
+                rating = self.mpaa
+            else:
+                rating = 'NR'
+            tags = {'%TITLE%': self.title,
+                    '%FN%': fn,
+                    '%EXT%': ext,
+                    '%DT%': datetime.datetime.strftime(self.trailers[i].date, '%Y-%m%d'),
+                    '%DTD%': datetime.datetime.strftime(self.trailers[i].urls[res].downloaded, '%Y-%m%d'),
+                    '%RES%': res,
+                    '%MPAA%': rating
+                    }
+            new_fn = options.rename_mask
+            #import pdb; pdb.set_trace()
+            for tag in tags:
+                while 1:
+                    _ = new_fn
+                    try:
+                        new_fn = re.sub(tag, tags[tag], new_fn)
+                    except:
+                        import pdb; pdb.set_trace()
+                    if _ == new_fn:
+                        #nothing left to change for this tag
+                        break
+
+            self.move_trailer(i, new_fn, res)
+
+            print "Saved to %s" % self.trailers[i].urls[res].local_path
+
+    def move_trailer(self, trailer_index, dest_fn, res):
+        mkdir(options.destination)
+        dest = sanitize(os.path.splitext(dest_fn)[0], fn=True) + os.path.splitext(dest_fn)[1]
+        dest = os.path.join(os.path.join(options.destination, dest))
+        source = self.trailers[trailer_index].urls[res].local_path
+
+        self.trailers[trailer_index].urls[res].local_path = move_file(source, dest)
+
 
     def _make_tag(self, text):
         return "#'%s'" % text
@@ -699,22 +782,20 @@ class TrailerUrl():
             return
 
         opener = _get_trailer_opener(self.url)
-        fn = self.filename(self.url)
+        self.local_path = os.path.abspath(self.filename(self.url))
 
-        f = open(fn, 'wb')
+        f = open(self.local_path, 'wb')
         f.write(opener.read())
         f.close()
 
         self.downloaded = datetime.datetime.today()
-        self.hash = hash_file(fn)
-        self.size = os.path.getsize(fn)
-
-        mkdir(options.destination)
-        self.local_path = move_file(fn, os.path.join(options.destination, fn))
+        self.hash = hash_file(self.local_path)
+        self.size = os.path.getsize(self.local_path)
 
     def filename(self, url):
         orig = os.path.basename(url)
-        ext = os.path.splitext(orig)[1]
+        ext = os.path.splitext(orig)[1][1:]
+        fn = os.path.splitext(orig)[0]
 
         return orig
 
