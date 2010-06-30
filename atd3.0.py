@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import shutil
+import string
 import struct
 import time
 import unicodedata
@@ -16,38 +17,31 @@ import imdb
 from pkg.optparse_fmt import IndentedHelpFormatterWithNL
 import pkg.y_serial_v052 as y_serial
 
-def sanitize(text, fn=False):
-    if not fn:
-        if type(text) != type(unicode()):
-            return text
-    else:
-        invalid_chars = r'<>:"/\|?*.'
-        text = unicode(text)
+def sanitized_filename(filename, file_location=None):
+    ''' Used to remove problematic unicode characters from text and to sanitize
+        text for use in filenames.
+    '''
+    valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
+    fn = ''.join(c for c in filename if c in valid_chars)
 
-    punctuation = { ord(u'\N{LEFT SINGLE QUOTATION MARK}'): ord(u"'"),
-                   ord(u'\N{RIGHT SINGLE QUOTATION MARK}'): ord(u"'"),
-                   ord(u'\N{LEFT DOUBLE QUOTATION MARK}'): ord(u'"'),
-                   ord(u'\N{RIGHT DOUBLE QUOTATION MARK}'): ord(u'"'),
-                   ord(u'\N{EM DASH}'): ord(u'-'),
-                   ord(u'\N{EN DASH}'): ord(u'-')}
-    valid_chars = []
-    orig_text = unicode(text)
-    text = text.translate(punctuation)
-    text = unicodedata.normalize('NFKD', text)
-    text = text.encode("cp1252", "replace")
-    if fn:
-        for char in text:
-            if char not in invalid_chars:
-                valid_chars.append(char)
-    else:
-        for char in text:
-            valid_chars.append(char)
-    if len(valid_chars) > 0:
-        ret = ''.join(valid_chars)
-        return ret
-    else:
-        #just return a gibberish, but safe, text
-        return base64.urlsafe_b64encode(text)
+    if file_location:
+        #test filename for validity on file system at file_location
+        f = os.path.join(file_location, fn)
+        try:
+            open(f, 'w').close()
+            os.remove(f)
+            return fn
+        except:
+            fn = "atd-%s" % fn
+            f = os.path.join(file_location, fn)
+            try:
+                open(f, 'w').close()
+                os.remove(f)
+                return fn
+            except:
+                raise NameError("Cannot build valid filename!")
+
+
 
 def move_file(s, d):
     ''' Argument d should include destination filename.
@@ -454,7 +448,7 @@ class Movie():
 
     def move_trailer(self, trailer_index, dest_fn, res):
         mkdir(options.destination)
-        dest = sanitize(os.path.splitext(dest_fn)[0], fn=True) + os.path.splitext(dest_fn)[1]
+        dest = sanitized_filename(os.path.splitext(dest_fn)[0], fn=True) + os.path.splitext(dest_fn)[1]
         dest = os.path.join(os.path.join(options.destination, dest))
         source = self.trailers[trailer_index].urls[res].local_path
 
