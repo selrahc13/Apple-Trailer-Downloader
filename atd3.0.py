@@ -16,6 +16,38 @@ import imdb
 from pkg.optparse_fmt import IndentedHelpFormatterWithNL
 import pkg.y_serial_v052 as y_serial
 
+def date_filter(obj_list, dt, date_attrib, after = True, include_none=True):
+    ''' Takes a list of objects and returns a list that contains each
+        object with attribute specified in "date_attrib" after "dt" unless
+        "after" is set to False, in which case it returns a list of
+        objects before "dt".
+
+        dt should be a datetime object
+    '''
+
+    movies = []
+
+    for movie in movie_list:
+        comp_date = movie.__dict__[date_attrib]
+        if after:
+            if comp_date:
+                if comp_date > dt:
+                    movies.append(movie)
+            else:
+                if include_none:
+                    movies.append(movie)
+
+        else:
+            if comp_date:
+                if comp_date:
+                    movies.append(movie)
+            else:
+                if include_none:
+                    movies.append(movie)
+
+    return movies
+
+
 def sanitized_filename(filename, file_location=None):
     ''' Used to sanitize text for use as a filename.  If file_location isn't
         provided, we don't create a test file.  Otherwise temporarily create a
@@ -89,6 +121,14 @@ def _options():
                       help='String representing how each trailer should be named on disk.  This string can include these variables:\n  %TITLE%:  The movies title.\n  %FN%:  The trailers original filename.\n  %EXT%:  The trailers original extension.\n  %DT%:  The date the trailer was posted to Apple.com\n  %DTD%:  The date the trailer was downloaded.\n  %RES%:  The resolution of the trailer.\n  %MPAA%:  The rating of the movie.\n------------------\nExamples:\n  atd.py -r "%TITLE% - %RES%.hdmov"\nWill result in trailers named:\n  Iron Man 2 - 720p.hdmov\nYou can also include path seperators to sort trailers into directories:\n  atd.py --rename="%MPAA%\%TITLE% - (%DT%).hdmov"\nResults in:\n  PG-13\Inception - (2010-05-12).hdmov',
                       type="string",
                       default="%FN%.%EXT%")
+    parser.add_option("--mdate",
+                      dest="mdatelimit",
+                      metavar="DATE",
+                      help="Only get trailers for movies with a release date after this. (format: YYYY-MM-DD)")
+    parser.add_option("--tdate",
+                      dest="tdatelimit",
+                      metavar="DATE",
+                      help="Only get trailers released after this date. (format: YYYY-MM-DD)")
 
     (options, args) = parser.parse_args()
 
@@ -433,7 +473,7 @@ class Movie():
                     '%MPAA%': rating
                     }
             new_fn = options.rename_mask
-            #import pdb; pdb.set_trace()
+
             for tag in tags:
                 while 1:
                     _ = new_fn
@@ -806,7 +846,10 @@ class TrailerUrl():
 options = _options()
 
 if __name__ == "__main__":
-    db = db_conx('atd.db')
+    #db = db_conx('atd.db')
 
-    update_movies(db)
-    download_trailers(db, '320')
+    #update_movies(db)
+    #download_trailers(db, '320')
+    ms = build_movies()
+    filtered = date_filter(ms, datetime.datetime(year=2011, month=1, day=1), 'release_date')
+    pass
