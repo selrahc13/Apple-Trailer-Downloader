@@ -7,6 +7,7 @@ import shlex
 import shutil
 import string
 import struct
+import sys
 import time
 import urllib2
 from xml.etree.ElementTree import ElementTree
@@ -25,27 +26,27 @@ def date_filter(obj_list, dt, date_attrib, after = True, include_none=True):
         dt should be a datetime object
     '''
 
-    movies = []
+    objects = []
 
-    for movie in movie_list:
-        comp_date = movie.__dict__[date_attrib]
+    for obj in obj_list:
+        comp_date = obj.__dict__[date_attrib]
         if after:
             if comp_date:
                 if comp_date > dt:
-                    movies.append(movie)
+                    objects.append(obj)
             else:
                 if include_none:
-                    movies.append(movie)
+                    objects.append(obj)
 
         else:
             if comp_date:
                 if comp_date:
-                    movies.append(movie)
+                    objects.append(obj)
             else:
                 if include_none:
-                    movies.append(movie)
+                    objects.append(obj)
 
-    return movies
+    return objects
 
 
 def sanitized_filename(filename, file_location=None):
@@ -56,6 +57,7 @@ def sanitized_filename(filename, file_location=None):
         >>> sanitized_filename("Prince of Persia: the Sands of Time.mov", ".")
         'Prince of Persia the Sands of Time.mov'
     '''
+
     valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
     fn = ''.join(c for c in filename if c in valid_chars)
 
@@ -100,8 +102,8 @@ def move_file(s, d):
             if not os.path.isfile(d):
                 shutil.copy(s, d)
                 os.remove(s)
-                if os.path.isfile(s):
-                    import pdb; pdb.set_trace()
+                #if os.path.isfile(s):
+                    #import pdb; pdb.set_trace()
                 return d
 
         raise NameError("Can't find valid filename for %s" % os.path.basename(s))
@@ -124,13 +126,26 @@ def _options():
     parser.add_option("--mdate",
                       dest="mdatelimit",
                       metavar="DATE",
-                      help="Only get trailers for movies with a release date after this. (format: YYYY-MM-DD)")
+                      help="Only get trailers for movies with a release date after this. Includes movies with no release date.(format: YYYY-MM-DD)")
     parser.add_option("--tdate",
                       dest="tdatelimit",
                       metavar="DATE",
                       help="Only get trailers released after this date. (format: YYYY-MM-DD)")
 
     (options, args) = parser.parse_args()
+
+    if options.mdatelimit:
+        try:
+            options.mdatelimit = datetime.datetime.strptime(options.mdatelimit, '%Y-%m-%d')
+        except:
+            print "Invalid date format for --mdate.  Please use YYYY-MM-DD."
+            sys.exit()
+
+    if options.tdatelimit:
+        try:
+            options.tdatelimit = datetime.datetime.strptime(options.tdatelimit, '%Y-%m-%d')
+        except:
+            print "Invalid date format for --tdate.  Please use YYYY-MM-DD."
 
     return options
 
@@ -202,8 +217,13 @@ def sync_trailer(trailer1, trailer2):
 
 def download_trailers(db, res):
     movies = [x[2] for x in db.selectdic("*", 'movies').values()]
+
+    if options.mdatelimit:
+        movies = date_filter(movies, options.mdatelimit, 'release_date')
+
     for movie in movies:
         print "Checking/downloading for %s" % movie.title
+
         movie.download_trailers(res)
         persist_movie(movie, db)
 
@@ -220,7 +240,7 @@ def persist_movie(movie, db):
     try:
         db.insert(movie, tags, 'movies')
     except:
-        import pdb; pdb.set_trace()
+        raise ValueError("DB ERROR: %s, %s" % (movie.title, tags))
 
 def compare_trailers(trailers1, trailers2):
     trailers = []
@@ -369,43 +389,7 @@ def _get_trailer_opener(url):
     return opener
 
 def _get_QT_version(lang, os):
-    ''' We dynamically set our version of QuickTime by fetching the most recent
-        version number from apple.com.
-
-        Refer to http://www.apple.com/quicktime/download/version.html for values
-        for the two parameters.
-
-           lang: A language taken from the language column at the above url.
-           os: A substring from a column header at the above url...e.g. "Windows"
-    '''
-    url = r"http://www.apple.com/quicktime/download/version.html"
-    response = urllib2.urlopen(url)
-    html = response.read()
-    soup = BeautifulSoup(html)
-    table = _walk_table(soup)
-
-    #get our OS column index
-    for col in table[0]:
-        if col.lower().count(os.lower()):
-            column_index = table[0].index(col)
-            break
-
-    #get our language row index
-    for row in table:
-        if row[0].lower().count(lang.lower()):
-            row_index = table.index(row)
-            break
-
-    #Get the cell at column index, row index
-    ver = table[row_index][column_index]
-    match = re.match(r"\d{1,2}\.\d{1,2}\.\d{1,2}", ver)
-
-    if match:
-        return ver
-
-    #If for some reason we don't have a valid version number just return the
-    #upper left-most version number
-    return table[1][1]
+    return '7.0.0'
 
 def _walk_table(soup):
     ''' Parse out the rows of an HTML table.  Shamelessly stolen from the
@@ -455,9 +439,10 @@ class Movie():
         self._getimdb()
 
     def download_trailers(self, res):
-
         for i in range(len(self.trailers)):
-            self.trailers[i].download(res)
+            download = self.trailers[i].download(res)
+            if not download:
+                return
             fn = os.path.splitext(os.path.basename(self.trailers[i].urls[res].local_path))[0]
             ext = os.path.splitext(os.path.basename(self.trailers[i].urls[res].local_path))[1][1:]
             if self.mpaa:
@@ -477,10 +462,8 @@ class Movie():
             for tag in tags:
                 while 1:
                     _ = new_fn
-                    try:
-                        new_fn = re.sub(tag, tags[tag], new_fn)
-                    except:
-                        import pdb; pdb.set_trace()
+                    new_fn = re.sub(tag, tags[tag], new_fn)
+
                     if _ == new_fn:
                         #nothing left to change for this tag
                         break
@@ -491,7 +474,7 @@ class Movie():
 
     def move_trailer(self, trailer_index, dest_fn, res):
         mkdir(options.destination)
-        dest = sanitized_filename(os.path.splitext(dest_fn)[0], fn=True) + os.path.splitext(dest_fn)[1]
+        dest = sanitized_filename(os.path.splitext(dest_fn)[0], file_location=options.destination) + os.path.splitext(dest_fn)[1]
         dest = os.path.join(os.path.join(options.destination, dest))
         source = self.trailers[trailer_index].urls[res].local_path
 
@@ -576,7 +559,6 @@ class Movie():
                 continue
             except:
                 print "Unknown error with additional trailer finder"
-                import pdb; pdb.set_trace()
 
             headers = opener.info().headers
             for header in headers:
@@ -707,11 +689,16 @@ class Trailer():
 
     def download(self, res):
         res_choice = self.choose_res(res)
-        if self.urls[res].downloaded:
-            print "already downloaded"
-            return
+        if not res_choice:
+            print "Can't choose res for %s" % self.movie_title
+            return None
+        if res in self.urls:
+            if self.urls[res].downloaded:
+                print "already downloaded"
+                return
         if res_choice:
             self.urls[res].download()
+            return True
         else:
             print "%s is not an available resolution" % res
 
@@ -773,7 +760,6 @@ class Trailer():
                     continue
                 except:
                     print "Unknown error with trailer resolution finder (http)"
-                    import pdb; pdb.set_trace()
 
                 headers = opener.info().headers
                 for header in headers:
@@ -846,10 +832,10 @@ class TrailerUrl():
 options = _options()
 
 if __name__ == "__main__":
-    #db = db_conx('atd.db')
+    db = db_conx('atd.db')
 
-    #update_movies(db)
-    #download_trailers(db, '320')
-    ms = build_movies()
-    filtered = date_filter(ms, datetime.datetime(year=2011, month=1, day=1), 'release_date')
-    pass
+    update_movies(db)
+    download_trailers(db, '320')
+    #ms = build_movies()
+    #filtered = date_filter(ms, datetime.datetime(year=2011, month=1, day=1), 'release_date')
+    #pass
