@@ -220,6 +220,14 @@ def download_trailers(db, res):
 
     if options.mdatelimit:
         movies = date_filter(movies, options.mdatelimit, 'release_date')
+    if options.tdatelimit:
+        trailer_date_filtered = []
+        for movie in movies:
+            for trailer in movie.trailers:
+                if trailer.date > options.tdatelimit:
+                    trailer_date_filtered.append(movie)
+                    break
+        movies = trailer_date_filtered
 
     for movie in movies:
         print "Checking/downloading for %s" % movie.title
@@ -292,7 +300,12 @@ def update_movies(db):
     '''
     movies = build_movies()
     for movie in movies:
-        persist_movie(movie, db)
+        #check to see if we have this movie in db already
+        persisted = fetch_by_apple_id(movie.apple_id, db)
+        if not persisted:
+            #if not put it in db
+            persist_movie(movie, db)
+
 
 def fetch_by_apple_id(apple_id, db):
     ''' Fetches the movie object for the specified apple_id from the database
@@ -435,6 +448,7 @@ class Movie():
         self.cast = None
         self.trailers = []
         self.inst_on = datetime.datetime.today()
+        self.updated_on = datetime.datetime.today()
         self._parsexml(xml)
         self._getimdb()
 
@@ -587,6 +601,15 @@ class Movie():
             potential_urls.append(re.sub(r"tlr\d", "tlr%s" % i, url))
 
         return potential_urls
+
+    def have_trailer(self, trailer_url):
+        ''' Checks our list of trailers to see if we already know about
+            trailer_url.
+        '''
+        for trailer in self.trailers:
+            if trailer_url == trailer.url:
+                return trailer
+        return False
 
     def _getimdb(self):
         ''' A lot of movies don't have an MPAA rating when they're posted to Apple.
