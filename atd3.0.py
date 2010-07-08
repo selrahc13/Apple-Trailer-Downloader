@@ -2,6 +2,7 @@ import base64
 import datetime
 from optparse import OptionParser
 import os
+import rfc822
 import re
 import shlex
 import shutil
@@ -102,8 +103,6 @@ def move_file(s, d):
             if not os.path.isfile(d):
                 shutil.copy(s, d)
                 os.remove(s)
-                #if os.path.isfile(s):
-                    #import pdb; pdb.set_trace()
                 return d
 
         raise NameError("Can't find valid filename for %s" % os.path.basename(s))
@@ -149,71 +148,59 @@ def _options():
 
     return options
 
-def sync_trailer(trailer1, trailer2):
-    ''' Syncs trailer1 and trailer2 states to each other.  This entails:
-
-        * Make sure both have same master url
-        * Add potential resolutions together (no duplicates)
-        * Sync the available resolution cache.  Keep newest cache refresh date.
-        * Sync the urls dict
+def sync_movie(old_movie, new_movie):
     '''
+    '''
+    synced_movie = old_movie
+    if old_movie.apple_id != new_movie.apple_id:
+        raise ValueError("Can only sync state info for the same movie")
 
-    if trailer1.url != trailer2.url:
-        raise ValueError("Can only sync state info for the same trailer")
+    replace_attribs = ['title', 'runtime', 'mpaa', 'release_date', 'description',
+                       'apple_genre', 'studio', 'director', 'cast']
 
-    potential_resolutions = trailer1.potential_res
-    potential_resolutions.extend(trailer2.potential_res)
-    potential_resolutions = list(set(potential_resolutions))
+    for attrib in replace_attribs:
+        setattr(synced_movie, attrib, getattr(new_movie, attrib))
+        if getattr(old_movie, attrib) != getattr(new_movie, attrib):
+            print "Updated: %s ==> %s" % (getattr(old_movie, attrib), getattr(new_movie, attrib))
 
-    available_resolutions = trailer1._rez_cache[1]
-    available_resolutions.extend(trailer2._rez_cache[1])
-    available_resolutions = list(set(available_resolutions))
+    for url in new_movie.poster_url:
+        if url not in old_movie.poster_url:
+            synced_movie.poster_url.append(url)
+            print "Added new poster url"
 
-    #select which cache date to use
-    if trailer1._rez_cache[0] > trailer2._rez_cache[0]:
-        available_resolutions = (trailer1._rez_cache[0], available_resolutions)
-    else:
-        available_resolutions = (trailer2._rez_cache[0], available_resolutions)
+    for url in new_movie.large_poster_url:
+        if url not in old_movie.large_poster_url:
+            synced_movie.large_poster_url.append(url)
+            print "Added new large_poster url"
 
-    if trailer1.urls == trailer2.urls:
-        rezs = trailer1.urls
-    else:
-        rezs = trailer1.urls.keys()
-        rezs.extend(trailer2.urls.keys())
-        rezs = dict.fromkeys((set(rezs)))
-        for res in rezs:
-            if trailer1.urls.has_key(res) and trailer2.urls.has_key(res):
-                #both trailers have this res
-                if trailer1.urls[res].downloaded and trailer2.urls[res].downloaded:
-                    #both trailers have a download datetime
-                    if trailer1.urls[res].downloaded > trailer2.urls[res].downloaded:
-                        #we use trailer1 if it's most recent
-                        rezs[res] = trailer1.urls[res]
+    for trailer in new_movie.trailers:
+        if trailer not in old_movie.trailers:
+            #We don't know about this particular trailer
+            synced_movie.trailers[trailer] = new_movie.trailers[trailer]
+            print "Found new trailer"
+        else:
+            #We do know about this trailer so we keep our old info
+            synced_movie.trailers[trailer] = old_movie.trailers[trailer]
+            #...However, we need to check if any of the resolutions for this
+            #trailer have been downloaded since old_movie
+            for res in new_movie.trailers[trailer].urls:
+                if res in synced_movie.trailers[trailer].urls:
+                    if synced_movie.trailers[trailer].urls[res].downloaded:
+                        #We have this one marked as downloaded, so don't do anything else
+                        continue
                     else:
-                        #otherwise we use trailer2
-                        rezs[res] = trailer2.urls[res]
-                elif not trailer1.urls[res].downloaded and trailer2.urls[res].downloaded:
-                    #trailer1 doesn't have a download time so we use trailer2
-                    rezs[res] = trailer2.urls[res]
-                elif trailer1.urls[res].downloaded and not trailer2.urls[res].downloaded:
-                    #trailer2 doesn't have a download time so we use trailer1
-                    rezs[res] = trailer1.urls[res]
+                        #We don't have this downloaded, so just copy our new state
+                        synced_movie.trailers[trailer].urls[res] = new_movie.trailers[trailer].urls[res]
                 else:
-                    #neither trailer has been downloaded so we just use trailer1
-                    rezs[res] = trailer1.urls[res]
-            elif trailer1.urls.has_key(res) and not trailer2.urls.has_key(res):
-                #trailers2 doesnt have this res, so we use trailers1
-                rezs[res] = trailer1.urls[res]
-            elif not trailer1.urls.has_key(res) and trailer2.urls.has_key(res):
-                #trailers1 doesn't have this res, so we use trailers2
-                rezs[res] = trailer2.urls[res]
+                    #We don't have this res, so just copy our new state
+                    synced_movie.trailers[trailer].urls[res] = new_movie.trailers[trailer].urls[res]
+                    #...This also means new_movie found new resolutions so copy it's _res_fetched attribute
+                    synced_movie.trailers[trailer]._rez_fetched = new_movie.trailers[trailer]._rez_fetched
 
-    trailer = Trailer(trailer1.date, trailer1.url, trailer1.movie_title)
-    trailer.potential_res = potential_resolutions
-    trailer._rez_cache = available_resolutions
-    trailer.urls = rezs
+    for trailer in synced_movie.trailers:
+        synced_movie.trailers[trailer].movie_title == synced_movie.title
 
-    return trailer
+    return synced_movie
 
 def download_trailers(db, res):
     movies = [x[2] for x in db.selectdic("*", 'movies').values()]
@@ -224,70 +211,42 @@ def download_trailers(db, res):
         trailer_date_filtered = []
         for movie in movies:
             for trailer in movie.trailers:
-                if trailer.date > options.tdatelimit:
+                if movie.trailers[trailer].date > options.tdatelimit:
                     trailer_date_filtered.append(movie)
                     break
         movies = trailer_date_filtered
 
     for movie in movies:
-        print "Checking/downloading for %s" % movie.title
-
-        movie.download_trailers(res)
-        persist_movie(movie, db)
+        if isinstance(movie, Movie):
+            try:
+                print movie.trailers[movie.trailers.keys()[0]].urls[res].downloaded
+            except:
+                print "rez urls not built yet"
+            print '*'*50
+            print "Checking/downloading for %s" % movie.title
+            movie.download_trailers(res)
+            persist_movie(movie, db)
 
 def persist_movie(movie, db):
-    print "Saving %s to database" % movie.title
     tags = movie.get_tags()
 
     #check if movie is in our database
     persisted_movie = fetch_by_apple_id(movie.apple_id, db)
+
     if persisted_movie:
         #Movie is already stored, so we need to update our stored info
-        movie = update_movie(persisted_movie, movie)
+        print "Updating %s in database" % movie.title
+
+        movie = sync_movie(persisted_movie, movie)
+
         delete_by_apple_id(movie.apple_id, db)
+    else:
+        print "Saving %s to database" % movie.title
+
     try:
         db.insert(movie, tags, 'movies')
     except:
         raise ValueError("DB ERROR: %s, %s" % (movie.title, tags))
-
-def compare_trailers(trailers1, trailers2):
-    trailers = []
-    already_synced = []
-
-    for t1 in trailers1:
-        for t2 in trailers2:
-            if t1.url == t2.url:
-                already_synced.append(t1.url)
-                trailers.append(sync_trailer(t1, t2))
-
-    for t2 in trailers2:
-        for t1 in trailers1:
-            if t2.url == t1.url and t1.url not in already_synced:
-                trailers.append(sync_trailer(t2, t1))
-
-    return trailers
-
-def update_movie(movie1, movie2):
-    ''' Syncs movie1 state with movie2 state.
-        These include:
-            # of trailers
-            Movie release date
-            Which trailers have been downloaded in which resolutions
-
-        Typically movie1 will be our persisted movie.
-    '''
-    if movie1.apple_id != movie2.apple_id:
-        raise ValueError("Cannot compare two different movies")
-
-    movie1.trailers = compare_trailers(movie1.trailers, movie2.trailers)
-
-    #update the movie release date
-    movie1.release_date = movie2.release_date
-
-    #update mpaa rating
-    movie1.mpaa = movie2.mpaa
-
-    return movie1
 
 def update_movies(db):
     ''' This is the main function for freshening our database with current info
@@ -298,13 +257,11 @@ def update_movies(db):
 
         The only parameter is "db" which is a reference to a y_serial database.
     '''
-    movies = build_movies()
+    movies = build_movies(db)
+    if not movies:
+        return
     for movie in movies:
-        #check to see if we have this movie in db already
-        persisted = fetch_by_apple_id(movie.apple_id, db)
-        if not persisted:
-            #if not put it in db
-            persist_movie(movie, db)
+        persist_movie(movie, db)
 
 
 def fetch_by_apple_id(apple_id, db):
@@ -321,8 +278,10 @@ def delete_by_apple_id(apple_id, db):
         return True
     return False
 
-def build_movies():
-    movies_xml = _fetchxml()
+def build_movies(db=None):
+    movies_xml = _fetchxml(db)
+    if not movies_xml:
+        return
     movies = []
 
     count = 0
@@ -414,14 +373,35 @@ def _walk_table(soup):
     return [ [ col.renderContents() for col in row.findAll(['td', 'th']) ]
              for row in soup.find('table').findAll('tr') ]
 
-def _fetchxml():
+def _fetchxml(db=None):
     ''' Get the xml file from apple describing all their current trailers.
         We then parse out the ElementTree elements for each Movie and return
         a them in a list.
+
+        If we receive a reference to our db, we check to see if the date in
+        current.xml has changed...if not we return None.
     '''
     current_trailers = r"http://www.apple.com/trailers/home/xml/current.xml"
     response = urllib2.urlopen(current_trailers)
     tree = ElementTree(file=response)
+    if db:
+        #date checking
+        date = tree.getroot().attrib['date']
+        d = rfc822.parsedate(date)
+        date = datetime.datetime(d[0], d[1], d[2], d[3], d[4])
+        try:
+            stored_date = db.select('current_xml_date', 'movies')
+        except:
+            stored_date = datetime.datetime(year=2000, month = 1, day = 1)
+        if date <= stored_date:
+            print "Apple trailers list hasn't been updated"
+            return
+        else:
+            try:
+                db.delete('current_xml_date', 'movies')
+            except:
+                pass
+            db.insert(date, 'current_xml_date', 'movies')
     #information for each trailer is stored in it's own 'movieinfo' node
     #here we create list of Elements with each Element containing the tree for
     #one movie/trailer
@@ -446,19 +426,19 @@ class Movie():
         self.studio = None
         self.director = None
         self.cast = None
-        self.trailers = []
+        self.trailers = {}
         self.inst_on = datetime.datetime.today()
         self.updated_on = datetime.datetime.today()
         self._parsexml(xml)
         self._getimdb()
 
     def download_trailers(self, res):
-        for i in range(len(self.trailers)):
-            download = self.trailers[i].download(res)
+        for t in self.trailers:
+            download = self.trailers[t].download(res)
             if not download:
                 return
-            fn = os.path.splitext(os.path.basename(self.trailers[i].urls[res].local_path))[0]
-            ext = os.path.splitext(os.path.basename(self.trailers[i].urls[res].local_path))[1][1:]
+            fn = os.path.splitext(os.path.basename(self.trailers[t].urls[res].local_path))[0]
+            ext = os.path.splitext(os.path.basename(self.trailers[t].urls[res].local_path))[1][1:]
             if self.mpaa:
                 rating = self.mpaa
             else:
@@ -466,8 +446,8 @@ class Movie():
             tags = {'%TITLE%': self.title,
                     '%FN%': fn,
                     '%EXT%': ext,
-                    '%DT%': datetime.datetime.strftime(self.trailers[i].date, '%Y-%m%d'),
-                    '%DTD%': datetime.datetime.strftime(self.trailers[i].urls[res].downloaded, '%Y-%m%d'),
+                    '%DT%': datetime.datetime.strftime(self.trailers[t].date, '%Y-%m%d'),
+                    '%DTD%': datetime.datetime.strftime(self.trailers[t].urls[res].downloaded, '%Y-%m%d'),
                     '%RES%': res,
                     '%MPAA%': rating
                     }
@@ -482,18 +462,17 @@ class Movie():
                         #nothing left to change for this tag
                         break
 
-            self.move_trailer(i, new_fn, res)
+            self.move_trailer(t, new_fn, res)
 
-            print "Saved to %s" % self.trailers[i].urls[res].local_path
+            print "Saved to %s" % self.trailers[t].urls[res].local_path
 
-    def move_trailer(self, trailer_index, dest_fn, res):
+    def move_trailer(self, trailer_key, dest_fn, res):
         mkdir(options.destination)
         dest = sanitized_filename(os.path.splitext(dest_fn)[0], file_location=options.destination) + os.path.splitext(dest_fn)[1]
         dest = os.path.join(os.path.join(options.destination, dest))
-        source = self.trailers[trailer_index].urls[res].local_path
+        source = self.trailers[trailer_key].urls[res].local_path
 
-        self.trailers[trailer_index].urls[res].local_path = move_file(source, dest)
-
+        self.trailers[trailer_key].urls[res].local_path = move_file(source, dest)
 
     def _make_tag(self, text):
         return "#'%s'" % text
@@ -534,7 +513,6 @@ class Movie():
         self.title = xml.find('info/title').text
         self.runtime = xml.find('info/runtime').text
         self.mpaa = xml.find('info/rating').text
-        #self.date = datetime.datetime.strptime(xml.find('info/postdate').text, "%Y-%m-%d")
 
         #Some trailers don't have a release date yet
         try:
@@ -546,8 +524,8 @@ class Movie():
 
         #Make a list of all the associated genre's
         self.apple_genre = [x.text for x in xml.findall('genre/name')]
-        self.poster_url = xml.find('poster/location').text
-        self.large_poster_url = xml.find('poster/xlarge').text
+        self.poster_url = [xml.find('poster/location').text]
+        self.large_poster_url = [xml.find('poster/xlarge').text]
         #self.trailer_url = [xml.find('preview/large').text]
         self.studio = xml.find('info/studio').text
         self.director = xml.find('info/director').text
@@ -558,14 +536,16 @@ class Movie():
         #Build a Trailer() for this trailer
         trailer_url = xml.find('preview/large').text
         trailer_date = datetime.datetime.strptime(xml.find('info/postdate').text, "%Y-%m-%d")
-        self.trailers.append(Trailer(trailer_date, trailer_url, self.title))
+        self.trailers[trailer_url] = Trailer(trailer_date, trailer_url, self.title)
 
         #Find any other trailers for the movie.
         self.find_trailers(trailer_url)
 
     def find_trailers(self, url):
         urls = []
-        for purl in self._build_other_trailer_urls(url):
+        other_urls = self._build_other_trailer_urls(url)
+
+        for purl in other_urls:
             #just checking for file existance, don't need to download
             try:
                 opener = _get_trailer_opener(purl)
@@ -582,12 +562,9 @@ class Movie():
                         urls.append(purl)
 
         for u in urls:
-            for t in self.trailers:
-                #Make sure we don't already have this one
-                if u != t.url:
-                    #We can't know the date of these trailers so we just assign them today's date
-                    self.trailers.append(Trailer(datetime.datetime.today(), u, self.title))
-
+            if u not in self.trailers:
+                print "FOUND ANOTHER TRAILER"
+                self.trailers[u] = Trailer(datetime.datetime.today(), u, self.title)
 
     def _build_other_trailer_urls(self, url):
         potential_urls = []
@@ -607,7 +584,7 @@ class Movie():
             trailer_url.
         '''
         for trailer in self.trailers:
-            if trailer_url == trailer.url:
+            if trailer_url == self.trailers[trailer].url:
                 return trailer
         return False
 
@@ -707,7 +684,7 @@ class Trailer():
         self.date = date
         self.url = url
         self.potential_res = ['1080p', '720p', '480p', '640w', '480', '320']
-        self._rez_cache = (datetime.datetime.today(), [])
+        self._rez_fetched = datetime.datetime.today()
         self.urls = {}
 
     def download(self, res):
@@ -715,10 +692,6 @@ class Trailer():
         if not res_choice:
             print "Can't choose res for %s" % self.movie_title
             return None
-        if res in self.urls:
-            if self.urls[res].downloaded:
-                print "already downloaded"
-                return
         if res_choice:
             self.urls[res].download()
             return True
@@ -727,7 +700,7 @@ class Trailer():
 
     def build_urls(self, rezs):
         for res in rezs:
-            self.urls[res] = TrailerUrl(res, self.url)
+            self.urls[res] = TrailerResUrl(res, self.url)
 
     def choose_res(self, target_res, go_higher=False, exact=True):
         if exact:
@@ -768,7 +741,7 @@ class Trailer():
     @property
     def available_res(self):
         #go fetch available resolutions only if it's been more than 6 days
-        if (datetime.datetime.today() - self._rez_cache[0]).days > 6 or len(self._rez_cache[1]) == 0:
+        if (datetime.datetime.today() - self._rez_fetched).days > 6 or len(self.urls) == 0:
             rezs = []
             for res in self.potential_res:
                 #build the url for the resolution
@@ -791,13 +764,15 @@ class Trailer():
                         if header.lower().count('video/quicktime'):
                             rezs.append(res)
 
-            #store resolutions in our cache along with the datetime
-            self._rez_cache = (datetime.datetime.today(), rezs)
+            #store datetime for cache purposes
+            self._rez_fetched = datetime.datetime.today()
 
             #populate our list of urls for this trailer
             self.build_urls(rezs)
 
-        return self._rez_cache[1]
+            return rezs
+        else:
+            return self.urls.keys()
 
     def __str__(self):
         return "<Trailer: %s>" % self.movie_title
@@ -805,7 +780,7 @@ class Trailer():
     def __repr__(self):
         return self.__str__()
 
-class TrailerUrl():
+class TrailerResUrl():
     def __init__(self, res, master_url):
         self.master_url = master_url
         self.res = res
@@ -826,14 +801,15 @@ class TrailerUrl():
         if self.downloaded:
             print "already downloaded"
             return
-
-        opener = _get_trailer_opener(self.url)
         self.local_path = os.path.abspath(self.filename(self.url))
+        if not fake:
+            opener = _get_trailer_opener(self.url)
 
-        f = open(self.local_path, 'wb')
-        f.write(opener.read())
-        f.close()
-
+            f = open(self.local_path, 'wb')
+            f.write(opener.read())
+            f.close()
+        else:
+            open(self.local_path, 'w').close()
         self.downloaded = datetime.datetime.today()
         self.hash = hash_file(self.local_path)
         self.size = os.path.getsize(self.local_path)
@@ -855,10 +831,8 @@ class TrailerUrl():
 options = _options()
 
 if __name__ == "__main__":
+    fake = True
     db = db_conx('atd.db')
 
     update_movies(db)
     download_trailers(db, '320')
-    #ms = build_movies()
-    #filtered = date_filter(ms, datetime.datetime(year=2011, month=1, day=1), 'release_date')
-    #pass
