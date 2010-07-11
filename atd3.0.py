@@ -112,7 +112,7 @@ def _options():
     res_pref = ['1080p', '720p', '480p', '640w', '480', '320']
 
     usage = "usage: %prog [options]\n\nIf no options passed, it will download all not already downloaded trailers to a subdir called Trailers."
-    parser = OptionParser(version="%prog 3.0dev", usage=usage, formatter=IndentedHelpFormatterWithNL())
+    parser = OptionParser(version="%prog 3.0dev1", usage=usage, formatter=IndentedHelpFormatterWithNL())
     parser.add_option("-d", "--dest",
                       dest="destination",
                       metavar="DIR",
