@@ -109,6 +109,8 @@ def move_file(s, d):
 
 
 def _options():
+    res_pref = ['1080p', '720p', '480p', '640w', '480', '320']
+
     usage = "usage: %prog [options]\n\nIf no options passed, it will download all not already downloaded trailers to a subdir called Trailers."
     parser = OptionParser(version="%prog 3.0dev", usage=usage, formatter=IndentedHelpFormatterWithNL())
     parser.add_option("-d", "--dest",
@@ -130,6 +132,16 @@ def _options():
                       dest="tdatelimit",
                       metavar="DATE",
                       help="Only get trailers released after this date. (format: YYYY-MM-DD)")
+    hmsg = "Get specified resolution or less.  Options are %s" % res_pref
+    hmsg = hmsg + " (Default: %default)"
+    parser.add_option("--respref",
+                      dest="respref",
+                      help=hmsg,
+                      default='320')
+    parser.add_option("-f", "--fake",
+                      dest="fake",
+                      help="Don't download, just create dummy files zero bytes long.",
+                      action="store_true")
 
     (options, args) = parser.parse_args()
 
@@ -145,6 +157,11 @@ def _options():
             options.tdatelimit = datetime.datetime.strptime(options.tdatelimit, '%Y-%m-%d')
         except:
             print "Invalid date format for --tdate.  Please use YYYY-MM-DD."
+            sys.exit()
+
+    if options.respref not in res_pref:
+        print "Invalid respoution specified for --respref"
+        sys.exit()
 
     return options
 
@@ -218,10 +235,10 @@ def download_trailers(db, res):
 
     for movie in movies:
         if isinstance(movie, Movie):
-            try:
-                print movie.trailers[movie.trailers.keys()[0]].urls[res].downloaded
-            except:
-                print "rez urls not built yet"
+            #try:
+                #print movie.trailers[movie.trailers.keys()[0]].urls[res].downloaded
+            #except:
+                #pass
             print '*'*50
             print "Checking/downloading for %s" % movie.title
             movie.download_trailers(res)
@@ -563,7 +580,6 @@ class Movie():
 
         for u in urls:
             if u not in self.trailers:
-                print "FOUND ANOTHER TRAILER"
                 self.trailers[u] = Trailer(datetime.datetime.today(), u, self.title)
 
     def _build_other_trailer_urls(self, url):
@@ -679,11 +695,12 @@ class Movie():
         return "<Movie: %s>" % self.title
 
 class Trailer():
-    def __init__(self, date, url, movie_title):
+    def __init__(self, date, url, movie_title, potential_res=None):
         self.movie_title = movie_title
         self.date = date
         self.url = url
-        self.potential_res = ['1080p', '720p', '480p', '640w', '480', '320']
+        if not potential_res:
+            self.potential_res = ['1080p', '720p', '480p', '640w', '480', '320']
         self._rez_fetched = datetime.datetime.today()
         self.urls = {}
 
@@ -831,8 +848,11 @@ class TrailerResUrl():
 options = _options()
 
 if __name__ == "__main__":
-    fake = True
+    if options.fake:
+        fake = True
+    else:
+        fake = False
     db = db_conx('atd.db')
 
     update_movies(db)
-    download_trailers(db, '320')
+    download_trailers(db, options.respref)
