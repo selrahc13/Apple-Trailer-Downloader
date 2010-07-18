@@ -25,13 +25,13 @@ def date_filter(obj_list, dt, date_attrib, after = True, include_none=True):
         "after" is set to False, in which case it returns a list of
         objects before "dt".
 
-        dt should be a datetime object
+        dt and date_attrib should be a datetime object
     '''
 
     objects = []
 
     for obj in obj_list:
-        comp_date = obj.__dict__[date_attrib]
+        comp_date = getattr(obj, date_attrib)
         if after:
             if comp_date:
                 if comp_date > dt:
@@ -50,6 +50,9 @@ def date_filter(obj_list, dt, date_attrib, after = True, include_none=True):
 
     return objects
 
+def get_movies_from_db(db):
+    movies = [x[2] for x in db.selectdic("*", 'movies').values() if isinstance(x[2], Movie)]
+    return movies
 
 def sanitized_filename(filename, file_location=None):
     ''' Used to sanitize text for use as a filename.  If file_location isn't
@@ -228,7 +231,7 @@ def download_trailers(db, res):
     if options.redownload:
         movies = fetch_by_movie_title(options.redownload, db)
     else:
-        movies = [x[2] for x in db.selectdic("*", 'movies').values()]
+        movies = get_movies_from_db(db)
 
     if options.mdatelimit:
         movies = date_filter(movies, options.mdatelimit, 'release_date')
@@ -492,8 +495,10 @@ class Movie():
         dest = sanitized_filename(os.path.splitext(dest_fn)[0], file_location=options.destination) + os.path.splitext(dest_fn)[1]
         dest = os.path.join(os.path.join(options.destination, dest))
         source = self.trailers[trailer_key].urls[res].local_path
-
-        self.trailers[trailer_key].urls[res].local_path = move_file(source, dest)
+        if os.path.abspath(source).lower() != os.path.abspath(dest).lower():
+            self.trailers[trailer_key].urls[res].local_path = move_file(source, dest)
+        else:
+            self.trailers[trailer_key].urls[res].local_path = source
 
     def _make_tag(self, text):
         return "#'%s'" % text
