@@ -31,26 +31,32 @@ def date_filter(obj_list, dt, date_attrib, after = True, include_none=True):
     objects = []
 
     for obj in obj_list:
-        comp_date = getattr(obj, date_attrib)
+        comp_date = getattr(obj, date_attrib, default=None)
+
         if after:
             if comp_date:
-                if comp_date > dt:
+                if comp_date => dt:
+                    #include all objects with date_attrib => dt
                     objects.append(obj)
             else:
                 if include_none:
+                    #if we want to include objects where date_attrib is None
                     objects.append(obj)
-
         else:
             if comp_date:
-                if comp_date:
+                if comp_date <= dt:
+                    #include all objects with date_attrib <= dt
                     objects.append(obj)
             else:
                 if include_none:
+                    #if we want to include objects where date_attrib is None
                     objects.append(obj)
 
     return objects
 
 def get_movies_from_db(db):
+    ''' Retrieve all Movie objects from database.
+    '''
     movies = [x[2] for x in db.selectdic("*", 'movies').values() if isinstance(x[2], Movie)]
     return movies
 
@@ -63,6 +69,7 @@ def sanitized_filename(filename, file_location=None):
         'Prince of Persia the Sands of Time.mov'
     '''
 
+    #For safety's sake we only include ascii letters and digits
     valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
     fn = ''.join(c for c in filename if c in valid_chars)
 
@@ -70,10 +77,14 @@ def sanitized_filename(filename, file_location=None):
         #test filename for validity on file system at file_location
         f = os.path.join(file_location, fn)
         try:
+            #Try to create file
             open(f, 'w').close()
             os.remove(f)
             return fn
         except:
+            ''' if we fail, it's often because we have illegal character at begining
+                so try prepending some valid characters.
+            '''
             fn = "atd-%s" % fn
             f = os.path.join(file_location, fn)
             try:
@@ -86,34 +97,43 @@ def sanitized_filename(filename, file_location=None):
         return fn
 
 def move_file(s, d):
-    ''' Argument d should include destination filename.
+    ''' Try to safely move a file from s to d.  If filename already exists, and
+        file contents are different (as determined by hash_file()) we try
+        appending an integer to filename.
+
+        Argument d should include destination filename as well as path.
+
     '''
+
     if not os.path.isfile(d):
-        shutil.copy(s, d)
-        os.remove(s)
+        #Filename doesn't exist at destination, so move it...
+        shutil.move(s, d)
         return d
     else:
+        #Filename exists, so lets see if it's the same file
         source_hash = hash_file(s)
 
         if source_hash == hash_file(d):
+            #It is the same file, so just delete source
             os.remove(s)
             return d
 
-        #try up to 10 filenames before failing
+        #Different file with same filename so try up to 10 filenames before failing
         for i in range(10):
             d = "%s%s%s" % (os.path.splitext(d)[0],
                                       "." + str(i),
                                       os.path.splitext(d)[1])
 
             if not os.path.isfile(d):
-                shutil.copy(s, d)
-                os.remove(s)
+                shutil.move(s, d)
                 return d
 
         raise NameError("Can't find valid filename for %s" % os.path.basename(s))
 
 
 def _options():
+    ''' Process command-line options
+    '''
     res_pref = ['1080p', '720p', '480p', '640w', '480', '320']
 
     usage = "usage: %prog [options]\n\nIf no options passed, it will download all not already downloaded trailers to a subdir called Trailers."
@@ -174,20 +194,24 @@ def _options():
     return options
 
 def sync_movie(old_movie, new_movie):
-    '''
+    ''' Take two Movie objects with both representing the same movie and sync
+        the info between them.
     '''
     synced_movie = old_movie
     if old_movie.apple_id != new_movie.apple_id:
         raise ValueError("Can only sync state info for the same movie")
 
+    #These attributes we'll always want the newest version of...
     replace_attribs = ['title', 'runtime', 'mpaa', 'release_date', 'description',
                        'apple_genre', 'studio', 'director', 'cast']
 
+    #...so we just use the info from new_movie without regard to it's value in old_movie
     for attrib in replace_attribs:
         setattr(synced_movie, attrib, getattr(new_movie, attrib))
         if getattr(old_movie, attrib) != getattr(new_movie, attrib):
             print "Updated: %s ==> %s" % (getattr(old_movie, attrib), getattr(new_movie, attrib))
 
+    #If we have any new urls in the following lists we add them
     for url in new_movie.poster_url:
         if url not in old_movie.poster_url:
             synced_movie.poster_url.append(url)
@@ -228,14 +252,22 @@ def sync_movie(old_movie, new_movie):
     return synced_movie
 
 def download_trailers(db, res):
+    ''' Build a list of movies and then call the appropriate download method
+        on each.
+    '''
     if options.redownload:
+        #User specified a title string to download, so build our list of movies
+        #using that
         movies = fetch_by_movie_title(options.redownload, db)
     else:
+        #Get all movies
         movies = get_movies_from_db(db)
 
     if options.mdatelimit:
+        #User has a movie date filter set, so filter our list of movies
         movies = date_filter(movies, options.mdatelimit, 'release_date')
     if options.tdatelimit:
+        #User has a trailer date filter set, so filter our list of movies
         trailer_date_filtered = []
         for movie in movies:
             for trailer in movie.trailers:
@@ -249,12 +281,19 @@ def download_trailers(db, res):
             print '*'*50
             print "Checking/downloading for %s" % movie.title
             if options.redownload:
+                ''' Since --download option was used, call Movie.download_trailers()
+                    with force=True because we don't care if we've already downloaded the trailer before
+                '''
                 movie.download_trailers(res, force=True)
             else:
+                #Call Movie.download_trailers()
                 movie.download_trailers(res)
             persist_movie(movie, db)
 
 def persist_movie(movie, db):
+    ''' Surprisingly this function is used for saving a Movie object to our
+        database.
+    '''
     tags = movie.get_tags()
 
     #check if movie is in our database
@@ -265,7 +304,6 @@ def persist_movie(movie, db):
         print "Updating %s in database" % movie.title
 
         movie = sync_movie(persisted_movie, movie)
-
         delete_by_apple_id(movie.apple_id, db)
     else:
         print "Saving %s to database" % movie.title
