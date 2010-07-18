@@ -13,6 +13,7 @@ import time
 import urllib2
 from xml.etree.ElementTree import ElementTree
 
+
 from pkg.BeautifulSoup import BeautifulSoup
 import imdb
 from pkg.optparse_fmt import IndentedHelpFormatterWithNL
@@ -92,6 +93,7 @@ def move_file(s, d):
         source_hash = hash_file(s)
 
         if source_hash == hash_file(d):
+            os.remove(s)
             return d
 
         #try up to 10 filenames before failing
@@ -142,6 +144,9 @@ def _options():
                       dest="fake",
                       help="Don't download, just create dummy files zero bytes long.",
                       action="store_true")
+    parser.add_option("--download",
+                      dest="redownload",
+                      help="(Re)download trailers for the movie specified.  Does a substring match so using 'Iron Man' would (re)download trailers for 'Iron Man' and 'Iron Man 2'.  We also accept the '?' and '*' wildcards.  Using this option skips normal download processing so only the specified movie gets downloaded on this run.  Case senstive.")
 
     (options, args) = parser.parse_args()
 
@@ -220,7 +225,10 @@ def sync_movie(old_movie, new_movie):
     return synced_movie
 
 def download_trailers(db, res):
-    movies = [x[2] for x in db.selectdic("*", 'movies').values()]
+    if options.redownload:
+        movies = fetch_by_movie_title(options.redownload, db)
+    else:
+        movies = [x[2] for x in db.selectdic("*", 'movies').values()]
 
     if options.mdatelimit:
         movies = date_filter(movies, options.mdatelimit, 'release_date')
@@ -235,13 +243,12 @@ def download_trailers(db, res):
 
     for movie in movies:
         if isinstance(movie, Movie):
-            #try:
-                #print movie.trailers[movie.trailers.keys()[0]].urls[res].downloaded
-            #except:
-                #pass
             print '*'*50
             print "Checking/downloading for %s" % movie.title
-            movie.download_trailers(res)
+            if options.redownload:
+                movie.download_trailers(res, force=True)
+            else:
+                movie.download_trailers(res)
             persist_movie(movie, db)
 
 def persist_movie(movie, db):
@@ -288,6 +295,13 @@ def fetch_by_apple_id(apple_id, db):
         return db.select('apple_id:%s' % apple_id, 'movies')
     except:
         return
+
+def fetch_by_movie_title(title, db):
+    '''Fetches movies whose title contains 'title'
+    '''
+    movies = [x[2] for x in db.selectdic("title:%s" % title, 'movies').values()]
+
+    return movies
 
 def delete_by_apple_id(apple_id, db):
     db.delete('apple_id:%s' % apple_id, 'movies')
@@ -380,16 +394,6 @@ def _get_trailer_opener(url):
 def _get_QT_version(lang, os):
     return '7.0.0'
 
-def _walk_table(soup):
-    ''' Parse out the rows of an HTML table.  Shamelessly stolen from the
-        following because I'm lazy:
-        http://www.jgc.org/blog/2009/11/parsing-html-in-python-with.html
-
-        This will be a list of lists.
-    '''
-    return [ [ col.renderContents() for col in row.findAll(['td', 'th']) ]
-             for row in soup.find('table').findAll('tr') ]
-
 def _fetchxml(db=None):
     ''' Get the xml file from apple describing all their current trailers.
         We then parse out the ElementTree elements for each Movie and return
@@ -411,7 +415,7 @@ def _fetchxml(db=None):
         except:
             stored_date = datetime.datetime(year=2000, month = 1, day = 1)
         if date <= stored_date:
-            print "Apple trailers list hasn't been updated"
+            print "Already have current Apple trailers information"
             return
         else:
             try:
@@ -449,9 +453,9 @@ class Movie():
         self._parsexml(xml)
         self._getimdb()
 
-    def download_trailers(self, res):
+    def download_trailers(self, res, force = False):
         for t in self.trailers:
-            download = self.trailers[t].download(res)
+            download = self.trailers[t].download(res, force=force)
             if not download:
                 return
             fn = os.path.splitext(os.path.basename(self.trailers[t].urls[res].local_path))[0]
@@ -506,11 +510,11 @@ class Movie():
         '''
         tags = []
 
-        tags.append(self.title)
+        tags.append("title:%s" % self.title)
         if self.release_date:
-            tags.append(datetime.datetime.strftime(self.release_date, "%Y-%m-%d"))
+            tags.append("release:%s" % datetime.datetime.strftime(self.release_date, "%Y-%m-%d"))
         for c in self.cast:
-            tags.append(c)
+            tags.append("cast:%s" % c)
         tags.append("mpaa:%s" % self.mpaa)
         tags.append("apple_id:%s" % self.apple_id)
 
@@ -704,13 +708,13 @@ class Trailer():
         self._rez_fetched = datetime.datetime.today()
         self.urls = {}
 
-    def download(self, res):
+    def download(self, res, force):
         res_choice = self.choose_res(res)
         if not res_choice:
             print "Can't choose res for %s" % self.movie_title
             return None
         if res_choice:
-            self.urls[res].download()
+            self.urls[res].download(force)
             return True
         else:
             print "%s is not an available resolution" % res
@@ -814,8 +818,8 @@ class TrailerResUrl():
             url = ''
         return url
 
-    def download(self):
-        if self.downloaded:
+    def download(self, force):
+        if self.downloaded and not force:
             print "already downloaded"
             return
         self.local_path = os.path.abspath(self.filename(self.url))
