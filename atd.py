@@ -170,6 +170,9 @@ def _options():
     parser.add_option("--download",
                       dest="redownload",
                       help="(Re)download trailers for the movie specified.  Does a substring match so using 'Iron Man' would (re)download trailers for 'Iron Man' and 'Iron Man 2'.  We also accept the '?' and '*' wildcards.  Using this option skips normal download processing so only the specified movie gets downloaded on this run.  Case senstive.")
+    parser.add_option("--flush",
+                      help="Deletes all stored state information, which means that atd will no longer remember which trailers it has already downloaded.",
+                      action="store_true")
 
     (options, args) = parser.parse_args()
 
@@ -451,8 +454,11 @@ def _fetchxml(db=None):
         date = tree.getroot().attrib['date']
         d = rfc822.parsedate(date)
         date = datetime.datetime(d[0], d[1], d[2], d[3], d[4])
+
         try:
             stored_date = db.select('current_xml_date', 'movies')
+            if not stored_date:
+                raise
         except:
             stored_date = datetime.datetime(year=2000, month = 1, day = 1)
         if date <= stored_date:
@@ -683,9 +689,12 @@ class Movie():
             #Use an exact title and year match to make sure we've found the
             #movie listing for this trailer.
             for result in i_results:
-                if result['title'].lower() == self.title.lower() and result['year'] == year:
-                    i_result = result
-                    break
+                try:
+                    if result['title'].lower() == self.title.lower() and result['year'] == year:
+                        i_result = result
+                        break
+                except:
+                    continue
 
             if not i_result:
                 #We didn't get a matching movie from imdb...most likely the result
@@ -900,6 +909,8 @@ if __name__ == "__main__":
     else:
         fake = False
     db = db_conx('atd.db')
+    if options.flush:
+        db.delete("*", "movies")
 
     update_movies(db)
     download_trailers(db, options.respref)
