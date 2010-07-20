@@ -35,7 +35,7 @@ def date_filter(obj_list, dt, date_attrib, after = True, include_none=True):
 
         if after:
             if comp_date:
-                if comp_date => dt:
+                if comp_date >= dt:
                     #include all objects with date_attrib => dt
                     objects.append(obj)
             else:
