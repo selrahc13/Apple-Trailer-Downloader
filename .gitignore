@@ -1,3 +1,5 @@
+*.mov
+*.xml
 *.db
 *.wpr
 *.pyc

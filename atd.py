@@ -31,7 +31,7 @@ def date_filter(obj_list, dt, date_attrib, after = True, include_none=True):
     objects = []
 
     for obj in obj_list:
-        comp_date = getattr(obj, date_attrib, default=None)
+        comp_date = getattr(obj, date_attrib)
 
         if after:
             if comp_date:
