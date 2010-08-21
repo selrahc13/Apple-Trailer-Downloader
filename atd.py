@@ -354,15 +354,26 @@ def delete_by_apple_id(apple_id, db):
     return False
 
 def build_movies(db=None):
-    movies_xml = _fetchxml(db)
-    if not movies_xml:
-        return
+    movies_xml = _fetchxml()
+
     movies = []
 
     count = 0
     for movie_xml in movies_xml:
-        print "Fetching movie info: %s/%s" % (count, len(movies_xml)) + "\r",
-        movies.append(Movie(movie_xml))
+        title = get_title(movie_xml)
+        url = get_trailer_url(movie_xml)
+        id_num = get_id(movie_xml)
+
+
+        if len(title) > 25:
+            print_title = title[:25] + "..."
+        else:
+            print_title = title
+
+        _ = " " * 70
+        print _ + "\r",
+        print "Fetching movie info: %s/%s (%s)" % (count, len(movies_xml), print_title) + "\r",
+        movies.append(Movie(title, url))
         count += 1
     print
     return movies
@@ -438,66 +449,46 @@ def _get_trailer_opener(url):
 def _get_QT_version(lang, os):
     return '7.0.0'
 
-def _fetchxml(db=None):
+def _fetchxml():
     ''' Get the xml file from apple describing all their current trailers.
         We then parse out the ElementTree elements for each Movie and return
         a them in a list.
-
-        If we receive a reference to our db, we check to see if the date in
-        current.xml has changed...if not we return None.
     '''
     current_trailers = r"http://www.apple.com/trailers/home/xml/current.xml"
     response = urllib2.urlopen(current_trailers)
     tree = ElementTree(file=response)
-    if db:
-        #date checking
-        date = tree.getroot().attrib['date']
-        d = rfc822.parsedate(date)
-        date = datetime.datetime(d[0], d[1], d[2], d[3], d[4])
 
-        try:
-            stored_date = db.select('current_xml_date', 'movies')
-            if not stored_date:
-                raise
-        except:
-            stored_date = datetime.datetime(year=2000, month = 1, day = 1)
-        if date <= stored_date:
-            print "Already have current Apple trailers information"
-            return
-        else:
-            try:
-                db.delete('current_xml_date', 'movies')
-            except:
-                pass
-            db.insert(date, 'current_xml_date', 'movies')
     #information for each trailer is stored in it's own 'movieinfo' node
     #here we create list of Elements with each Element containing the tree for
     #one movie/trailer
     movies = tree.findall('movieinfo')
     return movies
 
+def get_title(data):
+    ''' Parse data for a movie title.  In the current implementation we use
+        ElementTree to get the info/title text.
+    '''
+    return data.find('info/title').text
+
+def get_trailer_url(data):
+    ''' Parse data for a movie trailer.  In the current implementation we use
+        ElementTree to get the info/title text.
+    '''
+    return data.find('previews/preview').text
+
+def get_id(data):
+    ''' Fetch or create an id for data.  Currently uses the Apple-provided id.
+    '''
+    return data.attrib['id']
+
 class Movie():
-    def __init__(self, xml):
-        ''' Takes a movieinfo node from Apple's trailer xml file.
-        '''
-        self.apple_id = None
-        self.title = None
-        self.runtime = None
-        self.mpaa = None
+    def __init__(self, title, url, idnum):
+        self.apple_id = idnum
+        self.title = title
+        self.trailers[url] = Trailer(trailer_date, url, self.title)
+        self.find_trailers(trailer_url)
 
-        self.release_date = None
-        self.description = None
-        self.apple_genre = None
-        self.poster_url = None
-        self.large_poster_url = None
 
-        self.studio = None
-        self.director = None
-        self.cast = None
-        self.trailers = {}
-        self.inst_on = datetime.datetime.today()
-        self.updated_on = datetime.datetime.today()
-        self._parsexml(xml)
         self._getimdb()
 
     def download_trailers(self, res, force = False):
@@ -576,40 +567,8 @@ class Movie():
         else:
             return tags2
 
-    def _parsexml(self, xml):
-        ''' Get all the trailer attributes from the xml.
-        '''
-        self.apple_id = xml.attrib['id']
-        self.title = xml.find('info/title').text
-        self.runtime = xml.find('info/runtime').text
-        self.mpaa = xml.find('info/rating').text
 
-        #Some trailers don't have a release date yet
-        try:
-            self.release_date = datetime.datetime.strptime(xml.find('info/releasedate').text, "%Y-%m-%d")
-        except:
-            pass
 
-        self.description = xml.find('info/description').text
-
-        #Make a list of all the associated genre's
-        self.apple_genre = [x.text for x in xml.findall('genre/name')]
-        self.poster_url = [xml.find('poster/location').text]
-        self.large_poster_url = [xml.find('poster/xlarge').text]
-        #self.trailer_url = [xml.find('preview/large').text]
-        self.studio = xml.find('info/studio').text
-        self.director = xml.find('info/director').text
-
-        #Make a list of all the listed cast members
-        self.cast = [x.text for x in xml.findall('cast/name')]
-
-        #Build a Trailer() for this trailer
-        trailer_url = xml.find('preview/large').text
-        trailer_date = datetime.datetime.strptime(xml.find('info/postdate').text, "%Y-%m-%d")
-        self.trailers[trailer_url] = Trailer(trailer_date, trailer_url, self.title)
-
-        #Find any other trailers for the movie.
-        self.find_trailers(trailer_url)
 
     def find_trailers(self, url):
         urls = []
